@@ -249,6 +249,61 @@ test_get_job_logs() {
     fi
 }
 
+# Test: Real-time log streaming for long-running job
+test_realtime_log_streaming() {
+    info "Testing real-time log streaming with slow job"
+
+    # Submit a slow job (takes ~5 seconds)
+    RESP=$(curl -s -X POST -H "Content-Type: application/json" \
+        -d '{}' \
+        "$BASE_URL/jobs/slow")
+
+    JOB_ID=$(echo "$RESP" | grep -o '"id":"[^"]*"' | cut -d'"' -f4)
+    if [ -z "$JOB_ID" ]; then
+        fail "Submit slow job" "job ID" "$RESP"
+        return
+    fi
+    pass "Submitted slow job: $JOB_ID"
+
+    # Start streaming logs immediately (job is still running)
+    # Use timeout to not wait forever, capture partial output
+    sleep 1  # Give job a moment to start
+
+    # Stream logs for 3 seconds while job is still running
+    LOGS=$(timeout 3 curl -s -N "$BASE_URL/jobs/$JOB_ID/logs" 2>/dev/null || true)
+
+    # Check that we got some intermediate output (not just EOF)
+    if echo "$LOGS" | grep -q 'Step 1 of 5'; then
+        pass "Real-time streaming shows step 1"
+    else
+        fail "Real-time streaming shows step 1" "Step 1 of 5" "$LOGS"
+    fi
+
+    # Wait for job to complete
+    sleep 5
+
+    # Now get complete logs
+    LOGS=$(curl -s "$BASE_URL/jobs/$JOB_ID/logs")
+
+    if echo "$LOGS" | grep -q 'Step 5 of 5'; then
+        pass "Complete logs contain final step"
+    else
+        fail "Complete logs contain final step" "Step 5 of 5" "$LOGS"
+    fi
+
+    if echo "$LOGS" | grep -q 'Slow job completed!'; then
+        pass "Complete logs contain completion message"
+    else
+        fail "Complete logs contain completion message" "Slow job completed!" "$LOGS"
+    fi
+
+    if echo "$LOGS" | grep -q 'event: eof'; then
+        pass "Log stream ends with EOF"
+    else
+        fail "Log stream ends with EOF" "event: eof" "$LOGS"
+    fi
+}
+
 # Test: Deploy job with valid parameters
 test_deploy_job() {
     info "Testing POST /jobs/deploy (valid parameters)"
@@ -312,6 +367,10 @@ if [ -n "$SUCCESS_JOB_ID" ]; then
 fi
 
 test_deploy_job
+
+echo "" >&2
+echo "--- Log Streaming Tests ---" >&2
+test_realtime_log_streaming
 
 echo "" >&2
 echo "========================================" >&2
