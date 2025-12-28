@@ -674,18 +674,19 @@ spec:
 
 ### Prometheus Metrics
 
-Exposed at `/metrics`:
+Exposed at `/metrics` using [asynq's x/metrics](https://github.com/hibiken/asynq/wiki/Monitoring-and-Alerting) package:
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `aqsh_jobs_submitted_total` | Counter | `hook`, `queue` | Total jobs submitted |
-| `aqsh_jobs_completed_total` | Counter | `hook`, `queue`, `status` | Total jobs completed |
-| `aqsh_job_duration_seconds` | Histogram | `hook`, `queue` | Job execution duration |
-| `aqsh_jobs_active` | Gauge | `queue` | Currently running jobs |
-| `aqsh_jobs_pending` | Gauge | `queue` | Jobs waiting in queue |
-| `aqsh_worker_pool_size` | Gauge | - | Worker concurrency |
+| `asynq_queue_size` | Gauge | `queue` | Total tasks in queue |
+| `asynq_queue_latency_seconds` | Gauge | `queue` | Oldest pending task wait time |
+| `asynq_queue_memory_usage_approx_bytes` | Gauge | `queue` | Approximate memory usage |
+| `asynq_queue_paused_total` | Gauge | `queue` | Whether queue is paused |
+| `asynq_tasks_enqueued_total` | Gauge | `queue`, `state` | Task count by state (active, pending, retry, archived, completed, scheduled) |
+| `asynq_tasks_processed_total` | Counter | `queue` | Total processed tasks |
+| `asynq_tasks_failed_total` | Counter | `queue` | Total failed task attempts |
 
-Plus standard Asynq metrics.
+These metrics are read from Redis on each scrape, so they persist across aqsh restarts.
 
 ### Health Check
 
