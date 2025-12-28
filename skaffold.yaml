@@ -1,0 +1,42 @@
+apiVersion: skaffold/v4beta11
+kind: Config
+metadata:
+  name: aqsh
+
+build:
+  local:
+    push: false
+  tagPolicy:
+    sha256: {}
+  artifacts:
+  - image: aqsh
+    docker:
+      dockerfile: Dockerfile
+
+deploy:
+  kubectl: {}
+
+manifests:
+  rawYaml:
+  - k8s/namespace.yaml
+  - k8s/redis.yaml
+  - k8s/aqsh.yaml
+
+portForward:
+- resourceType: service
+  resourceName: aqsh
+  namespace: aqsh
+  port: 8080
+  localPort: 8080
+
+profiles:
+- name: remote
+  build:
+    local:
+      push: true
+    tagPolicy:
+      sha256: {}
+    artifacts:
+    - image: registry.registry.svc.cluster.local:30500/aqsh
+      docker:
+        dockerfile: Dockerfile

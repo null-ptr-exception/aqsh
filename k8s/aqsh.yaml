@@ -1,0 +1,208 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aqsh-hooks
+  namespace: aqsh
+data:
+  hooks.yaml: |
+    defaults:
+      timeout: 5m
+      max_retry: 3
+      queue: default
+
+    hooks:
+      hello:
+        script: hello.sh
+        description: "Simple hello world test"
+        timeout: 1m
+        max_retry: 0
+        input:
+          - name: name
+            env: NAME
+            required: true
+            type: string
+
+      deploy:
+        script: deploy.sh
+        description: "Deploy application to environment"
+        timeout: 10m
+        max_retry: 2
+        input:
+          - name: version
+            env: VERSION
+            required: true
+            type: string
+            pattern: '^v?\d+\.\d+\.\d+$'
+          - name: environment
+            env: ENVIRONMENT
+            required: true
+            type: string
+            enum: [dev, staging, prod]
+          - name: dry_run
+            env: DRY_RUN
+            required: false
+            type: bool
+            default: "false"
+
+      cleanup:
+        script: cleanup.sh
+        description: "Clean up old resources"
+        queue: long-running
+        timeout: 30m
+        input:
+          - name: older_than_days
+            env: OLDER_THAN_DAYS
+            required: true
+            type: int
+            min: 1
+            max: 365
+
+      slow:
+        script: slow.sh
+        description: "Slow job for testing log streaming"
+        timeout: 1m
+        max_retry: 0
+        input: []
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aqsh-scripts
+  namespace: aqsh
+data:
+  hello.sh: |
+    #!/bin/bash
+    set -e
+    echo "Hello, $NAME!"
+    echo "Task ID: $AQSH_TASK_ID"
+    echo "Current time: $(date)"
+    sleep 2
+    echo "Done!"
+
+  deploy.sh: |
+    #!/bin/bash
+    set -e
+    echo "Deploying version $VERSION to $ENVIRONMENT"
+    if [ "$DRY_RUN" = "true" ]; then
+        echo "[DRY RUN] Would deploy $VERSION to $ENVIRONMENT"
+        exit 0
+    fi
+    echo "Pulling image..."
+    sleep 1
+    echo "Scaling replicas..."
+    sleep 1
+    echo "Waiting for rollout..."
+    sleep 1
+    echo "Deployment complete!"
+
+  cleanup.sh: |
+    #!/bin/bash
+    set -e
+    echo "Cleaning up resources older than $OLDER_THAN_DAYS days"
+    echo "Scanning..."
+    sleep 2
+    echo "Found 0 resources to clean"
+    echo "Done!"
+
+  slow.sh: |
+    #!/bin/bash
+    set -e
+    echo "Starting slow job..."
+    for i in 1 2 3 4 5; do
+        echo "Step $i of 5"
+        sleep 1
+    done
+    echo "Slow job completed!"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aqsh
+  namespace: aqsh
+spec:
+  selector:
+    app: aqsh
+  ports:
+  - port: 8080
+    targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aqsh
+  namespace: aqsh
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aqsh
+  template:
+    metadata:
+      labels:
+        app: aqsh
+    spec:
+      initContainers:
+      - name: wait-for-redis
+        image: busybox:1.36
+        command:
+        - sh
+        - -c
+        - |
+          until nc -z redis 6379; do
+            echo "Waiting for Redis..."
+            sleep 2
+          done
+          echo "Redis is ready"
+
+      containers:
+      - name: aqsh
+        image: aqsh
+        ports:
+        - containerPort: 8080
+        env:
+        - name: AQSH_MODE
+          value: both
+        - name: AQSH_BIND
+          value: "0.0.0.0:8080"
+        - name: AQSH_REDIS_ADDR
+          value: redis:6379
+        - name: AQSH_HOOKS_CONFIG
+          value: /etc/aqsh/hooks.yaml
+        - name: AQSH_SCRIPTS_DIR
+          value: /scripts
+        - name: AQSH_WORKER_QUEUES
+          value: default,long-running
+        volumeMounts:
+        - name: hooks
+          mountPath: /etc/aqsh
+        - name: scripts
+          mountPath: /scripts
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          failureThreshold: 3
+
+      volumes:
+      - name: hooks
+        configMap:
+          name: aqsh-hooks
+      - name: scripts
+        configMap:
+          name: aqsh-scripts
+          defaultMode: 0755
