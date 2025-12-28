@@ -8,7 +8,7 @@ aqsh is a simple, production-ready job queue for executing shell scripts asynchr
 
 ### Background
 
-This project originated as DJQWSC (Distributed Job Queue With Shell Scripts), a fork of Fireworq + webhook. aqsh is a complete rewrite with a cleaner architecture.
+This project originated as [DJQWSC](https://github.com/rophy/djqwsc) (Distributed Job Queue With Shell Scripts), a fork of Fireworq + webhook. aqsh is a complete rewrite with a cleaner architecture.
 
 ### Why Rewrite?
 
