@@ -1,0 +1,60 @@
+defaults:
+  timeout: 5m
+  max_retry: 3
+  retry_delay: 30s
+  queue: default
+  log_retention: 24h
+
+hooks:
+  hello:
+    script: hello.sh
+    description: "Simple hello world test"
+    timeout: 1m
+    max_retry: 0
+
+    input:
+      - name: name
+        env: NAME
+        required: true
+        type: string
+        description: "Name to greet"
+
+  deploy:
+    script: deploy.sh
+    description: "Deploy application to environment"
+    timeout: 10m
+    max_retry: 2
+
+    input:
+      - name: version
+        env: VERSION
+        required: true
+        type: string
+        pattern: '^v?\d+\.\d+\.\d+$'
+        description: "Semantic version to deploy"
+
+      - name: environment
+        env: ENVIRONMENT
+        required: true
+        type: string
+        enum: [dev, staging, prod]
+
+      - name: dry_run
+        env: DRY_RUN
+        required: false
+        type: bool
+        default: "false"
+
+  cleanup:
+    script: cleanup.sh
+    description: "Clean up old resources"
+    queue: long-running
+    timeout: 30m
+
+    input:
+      - name: older_than_days
+        env: OLDER_THAN_DAYS
+        required: true
+        type: int
+        min: 1
+        max: 365

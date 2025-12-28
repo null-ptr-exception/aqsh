@@ -1,0 +1,23 @@
+# Binary
+aqsh
+
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+*.swp
+
+# Test artifacts
+*.test
+coverage.out
+
+# Documentation
+*.md
+!README.md
+
+# Local files
+.env
+*.local
