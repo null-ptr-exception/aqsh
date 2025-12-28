@@ -10,6 +10,9 @@ import (
 	"time"
 
 	"github.com/hibiken/asynq"
+	asynqmetrics "github.com/hibiken/asynq/x/metrics"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 	"github.com/rophy/aqsh/internal/config"
 	"github.com/rophy/aqsh/internal/hooks"
@@ -45,12 +48,17 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	s.rdb.SAdd(ctx, "asynq:queues", "default")
 
+	// Register asynq queue metrics collector
+	queueMetrics := asynqmetrics.NewQueueMetricsCollector(s.inspector)
+	prometheus.MustRegister(queueMetrics)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /jobs/{hook}", s.handleSubmitJob)
 	mux.HandleFunc("GET /jobs/{id}", s.handleGetJob)
 	mux.HandleFunc("GET /jobs/{id}/logs", s.handleGetLogs)
 	mux.HandleFunc("GET /hooks", s.handleListHooks)
 	mux.HandleFunc("GET /health", s.handleHealth)
+	mux.Handle("GET /metrics", promhttp.Handler())
 
 	srv := &http.Server{
 		Addr:    s.cfg.Bind,

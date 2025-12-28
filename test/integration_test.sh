@@ -65,6 +65,42 @@ test_health() {
     fi
 }
 
+# Test: GET /metrics (asynq queue metrics)
+test_metrics() {
+    info "Testing GET /metrics"
+    RESP=$(curl -s "$BASE_URL/metrics")
+
+    if echo "$RESP" | grep -q 'asynq_queue_size'; then
+        pass "GET /metrics returns asynq_queue_size"
+    else
+        fail "GET /metrics returns asynq_queue_size" "asynq_queue_size" "$RESP"
+    fi
+
+    if echo "$RESP" | grep -q 'asynq_tasks_enqueued_total'; then
+        pass "GET /metrics returns asynq_tasks_enqueued_total"
+    else
+        fail "GET /metrics returns asynq_tasks_enqueued_total" "asynq_tasks_enqueued_total" "$RESP"
+    fi
+}
+
+# Test: GET /metrics (after jobs have run)
+test_metrics_after_jobs() {
+    info "Testing GET /metrics (after jobs)"
+    RESP=$(curl -s "$BASE_URL/metrics")
+
+    if echo "$RESP" | grep -q 'asynq_tasks_processed_total'; then
+        pass "GET /metrics returns asynq_tasks_processed_total"
+    else
+        fail "GET /metrics returns asynq_tasks_processed_total" "asynq_tasks_processed_total" "$RESP"
+    fi
+
+    if echo "$RESP" | grep -q 'asynq_queue_latency_seconds'; then
+        pass "GET /metrics returns asynq_queue_latency_seconds"
+    else
+        fail "GET /metrics returns asynq_queue_latency_seconds" "asynq_queue_latency_seconds" "$RESP"
+    fi
+}
+
 # Test: GET /hooks
 test_list_hooks() {
     info "Testing GET /hooks"
@@ -346,6 +382,7 @@ wait_for_server
 echo "" >&2
 echo "--- Health & Hooks Tests ---" >&2
 test_health
+test_metrics
 test_list_hooks
 
 echo "" >&2
@@ -371,6 +408,10 @@ test_deploy_job
 echo "" >&2
 echo "--- Log Streaming Tests ---" >&2
 test_realtime_log_streaming
+
+echo "" >&2
+echo "--- Metrics Tests (after jobs) ---" >&2
+test_metrics_after_jobs
 
 echo "" >&2
 echo "========================================" >&2
