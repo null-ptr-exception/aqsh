@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"runtime/coverage"
 	"strings"
 	"time"
 
@@ -59,6 +61,12 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("GET /tasks", s.handleListTasks)
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.Handle("GET /metrics", promhttp.Handler())
+
+	// Coverage endpoint - only available when GOCOVERDIR is set
+	if coverDir := os.Getenv("GOCOVERDIR"); coverDir != "" {
+		mux.HandleFunc("POST /debug/coverage/flush", s.handleCoverageFlush)
+		log.Printf("Coverage endpoint enabled (GOCOVERDIR=%s)", coverDir)
+	}
 
 	srv := &http.Server{
 		Addr:    s.cfg.Bind,
@@ -305,6 +313,24 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"status": "healthy",
 		"redis":  redisStatus,
 		"mode":   s.cfg.Mode,
+	})
+}
+
+func (s *Server) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
+	coverDir := os.Getenv("GOCOVERDIR")
+	if coverDir == "" {
+		s.jsonError(w, http.StatusBadRequest, "GOCOVERDIR not set")
+		return
+	}
+
+	if err := coverage.WriteCountersDir(coverDir); err != nil {
+		s.jsonError(w, http.StatusInternalServerError, "failed to write coverage: "+err.Error())
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, map[string]any{
+		"status":    "flushed",
+		"cover_dir": coverDir,
 	})
 }
 

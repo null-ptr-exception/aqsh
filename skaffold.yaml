@@ -47,3 +47,14 @@ profiles:
     - image: registry.registry.svc.cluster.local:30500/aqsh
       docker:
         dockerfile: Dockerfile
+
+- name: coverage
+  build:
+    artifacts:
+    - image: aqsh
+      docker:
+        buildArgs:
+          DEBUG: "true"
+    - image: aqsh-test
+      docker:
+        dockerfile: Dockerfile.test

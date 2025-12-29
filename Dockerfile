@@ -1,6 +1,9 @@
 # Build stage
 FROM golang:1.24-alpine AS builder
 
+# Set DEBUG=true for coverage instrumentation
+ARG DEBUG=false
+
 WORKDIR /build
 
 # Copy go mod files first for better caching
@@ -11,11 +14,17 @@ RUN go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
 
-# Build binary
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o aqsh ./cmd/aqsh
+# Build binary (coverage instrumentation when DEBUG=true)
+RUN if [ "$DEBUG" = "true" ]; then \
+        CGO_ENABLED=0 GOOS=linux go build -cover -covermode=atomic -o aqsh ./cmd/aqsh; \
+    else \
+        CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o aqsh ./cmd/aqsh; \
+    fi
 
 # Runtime stage
 FROM alpine:3.20
+
+ARG DEBUG=false
 
 RUN apk add --no-cache bash ca-certificates tzdata
 
@@ -25,7 +34,7 @@ WORKDIR /app
 COPY --from=builder /build/aqsh /usr/local/bin/aqsh
 
 # Create directories for config and task scripts
-RUN mkdir -p /etc/aqsh /tasks
+RUN mkdir -p /etc/aqsh /tasks /coverage
 
 # Default environment
 ENV AQSH_MODE=both \
@@ -34,6 +43,10 @@ ENV AQSH_MODE=both \
     AQSH_TASKS_DIR=/tasks \
     AQSH_REDIS_ADDR=redis:6379
 
+# Bake DEBUG into image - sets GOCOVERDIR at runtime if true
+ENV AQSH_DEBUG=$DEBUG
+
 EXPOSE 8080
 
-ENTRYPOINT ["aqsh"]
+# Wrapper sets GOCOVERDIR only when AQSH_DEBUG=true
+ENTRYPOINT ["sh", "-c", "[ \"$AQSH_DEBUG\" = true ] && export GOCOVERDIR=/coverage; exec aqsh \"$@\"", "--"]
