@@ -166,7 +166,7 @@ Content-Type: application/json
   "status": "completed",
   "result": {
     "exit_code": 0,
-    "output": "Deployed v1.2.3 to prod successfully\n"
+    "data": "{\"status\":\"deployed\",\"version\":\"1.2.3\",\"environment\":\"prod\"}"
   },
   "created_at": "2025-12-28T10:00:00Z",
   "started_at": "2025-12-28T10:00:01Z",
@@ -281,9 +281,6 @@ defaults:
   max_retry: 3
   retry_delay: 30s
   queue: default
-  output:
-    type: text
-    max_size: 1MB
   log_retention: 24h
 
 hooks:
@@ -313,9 +310,6 @@ hooks:
         type: bool
         default: "false"
 
-    output:
-      type: text
-
   backup:
     script: /scripts/backup.sh
     description: "Backup database to S3"
@@ -336,9 +330,6 @@ hooks:
         type: string
         pattern: '^s3://[a-z0-9][a-z0-9.-]+/'
         default: "s3://backups/db/"
-
-    output:
-      type: json
 
   cleanup:
     script: /scripts/cleanup.sh
@@ -368,12 +359,46 @@ hooks:
 | `default` | string | Default value if not provided |
 | `description` | string | Human-readable description |
 
-### Output Configuration
+### Script Results (AQSH_RESULT_FILE)
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `type` | string | `text`, `json`, or `none` |
-| `max_size` | string | Maximum output size (e.g., `1MB`) |
+Scripts can optionally write structured results to the file specified by `$AQSH_RESULT_FILE`:
+
+```bash
+#!/bin/bash
+set -e
+
+echo "Processing..."  # Goes to logs (streamed real-time)
+# ... do work ...
+
+# Write structured result (stored with task)
+cat > "$AQSH_RESULT_FILE" << EOF
+{
+  "processed": 42,
+  "status": "success"
+}
+EOF
+```
+
+**Key points:**
+- `$AQSH_RESULT_FILE` is a temp file path set by the worker
+- Content is read after script exits and stored as a string with the task result
+- Maximum result size: 1MB
+- Logs (stdout/stderr) are streamed separately via Redis Streams
+- Clients are responsible for parsing the result (e.g., as JSON)
+
+**Result structure:**
+```json
+{
+  "exit_code": 0,
+  "data": "...",       // Contents of AQSH_RESULT_FILE as string (optional)
+  "error": "..."       // Set on execution error
+}
+```
+
+**Data field semantics:**
+- Field omitted: Script did not write to `$AQSH_RESULT_FILE`
+- `"data": ""`: Script wrote an empty file
+- `"data": "..."`: Script wrote content to the file
 
 ### Security
 
@@ -476,6 +501,7 @@ If client disconnects and reconnects:
 | `AQSH_BIND` | API listen address | `0.0.0.0:8080` |
 | `AQSH_HOOKS_CONFIG` | Path to hooks.yaml | `/etc/aqsh/hooks.yaml` |
 | `AQSH_SCRIPTS_DIR` | Scripts directory | `/scripts` |
+| `AQSH_RESULTS_DIR` | Directory for temp result files | `/var/lib/aqsh/results` |
 | `AQSH_REDIS_ADDR` | Redis address (standalone) | `localhost:6379` |
 | `AQSH_REDIS_SENTINEL_ADDRS` | Sentinel addresses (comma-separated) | - |
 | `AQSH_REDIS_SENTINEL_MASTER` | Sentinel master name | `mymaster` |

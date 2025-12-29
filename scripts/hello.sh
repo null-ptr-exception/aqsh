@@ -6,3 +6,11 @@ echo "Task ID: $AQSH_TASK_ID"
 echo "Current time: $(date)"
 sleep 2
 echo "Done!"
+
+# Write structured result to AQSH_RESULT_FILE
+cat > "$AQSH_RESULT_FILE" << EOF
+{
+  "greeted": "$NAME",
+  "timestamp": "$(date -Iseconds)"
+}
+EOF

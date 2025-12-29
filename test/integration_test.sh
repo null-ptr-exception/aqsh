@@ -246,10 +246,18 @@ test_get_job_success() {
         fail "GET /jobs/$JOB_ID shows exit_code=0" "exit_code:0" "$RESP"
     fi
 
-    if echo "$RESP" | grep -q 'Hello, IntegrationTest'; then
-        pass "GET /jobs/$JOB_ID output contains greeting"
+    # Check for result data from AQSH_RESULT_FILE (stored as string)
+    if echo "$RESP" | grep -q '"data":"'; then
+        pass "GET /jobs/$JOB_ID result contains data string"
     else
-        fail "GET /jobs/$JOB_ID output contains greeting" "Hello, IntegrationTest" "$RESP"
+        fail "GET /jobs/$JOB_ID result contains data string" '"data":"..."' "$RESP"
+    fi
+
+    # The data string should contain the greeted field (escaped JSON)
+    if echo "$RESP" | grep -q 'greeted'; then
+        pass "GET /jobs/$JOB_ID result data contains greeted field"
+    else
+        fail "GET /jobs/$JOB_ID result data contains greeted field" 'greeted' "$RESP"
     fi
 }
 
@@ -361,13 +369,84 @@ test_deploy_job() {
             fail "Deploy job completed successfully" "completed" "$RESP"
         fi
 
-        if echo "$RESP" | grep -q 'Deploying version 1.2.3 to prod'; then
-            pass "Deploy job output contains correct version and environment"
+        # Check for result data from AQSH_RESULT_FILE (stored as string, search for unescaped content)
+        if echo "$RESP" | grep -q 'deployed'; then
+            pass "Deploy job result data contains status=deployed"
         else
-            fail "Deploy job output contains correct version and environment" "Deploying version 1.2.3 to prod" "$RESP"
+            fail "Deploy job result data contains status=deployed" 'deployed' "$RESP"
+        fi
+
+        if echo "$RESP" | grep -q '1.2.3'; then
+            pass "Deploy job result data contains correct version"
+        else
+            fail "Deploy job result data contains correct version" '1.2.3' "$RESP"
         fi
     else
         fail "POST /jobs/deploy returns job ID" '{"id":"..."}' "$RESP"
+    fi
+}
+
+# Test: Deploy job with dry_run
+test_deploy_job_dry_run() {
+    info "Testing POST /jobs/deploy (dry run)"
+    RESP=$(curl -s -X POST -H "Content-Type: application/json" \
+        -d '{"version":"2.0.0","environment":"staging","dry_run":true}' \
+        "$BASE_URL/jobs/deploy")
+
+    if echo "$RESP" | grep -q '"id"'; then
+        JOB_ID=$(echo "$RESP" | grep -o '"id":"[^"]*"' | cut -d'"' -f4)
+        pass "POST /jobs/deploy (dry_run) returns job ID: $JOB_ID"
+
+        # Wait and check result
+        sleep 3
+        RESP=$(curl -s "$BASE_URL/jobs/$JOB_ID")
+
+        if echo "$RESP" | grep -q '"status":"completed"'; then
+            pass "Deploy dry_run job completed successfully"
+        else
+            fail "Deploy dry_run job completed successfully" "completed" "$RESP"
+        fi
+
+        # Check for dry_run status in result (stored as string)
+        if echo "$RESP" | grep -q 'dry_run'; then
+            pass "Deploy dry_run result data contains status=dry_run"
+        else
+            fail "Deploy dry_run result data contains status=dry_run" 'dry_run' "$RESP"
+        fi
+    else
+        fail "POST /jobs/deploy (dry_run) returns job ID" '{"id":"..."}' "$RESP"
+    fi
+}
+
+# Test: Job without result file (data field should be omitted)
+test_job_no_result_file() {
+    info "Testing job without AQSH_RESULT_FILE (slow hook)"
+    RESP=$(curl -s -X POST -H "Content-Type: application/json" \
+        -d '{}' \
+        "$BASE_URL/jobs/slow")
+
+    if echo "$RESP" | grep -q '"id"'; then
+        JOB_ID=$(echo "$RESP" | grep -o '"id":"[^"]*"' | cut -d'"' -f4)
+        pass "POST /jobs/slow returns job ID: $JOB_ID"
+
+        # Wait for job to complete
+        sleep 7
+        RESP=$(curl -s "$BASE_URL/jobs/$JOB_ID")
+
+        if echo "$RESP" | grep -q '"status":"completed"'; then
+            pass "Slow job completed successfully"
+        else
+            fail "Slow job completed successfully" "completed" "$RESP"
+        fi
+
+        # Verify data field is NOT present (script didn't write to result file)
+        if echo "$RESP" | grep -q '"data"'; then
+            fail "Result should NOT contain data field" "no data field" "$RESP"
+        else
+            pass "Result correctly omits data field (no result file written)"
+        fi
+    else
+        fail "POST /jobs/slow returns job ID" '{"id":"..."}' "$RESP"
     fi
 }
 
@@ -404,6 +483,8 @@ if [ -n "$SUCCESS_JOB_ID" ]; then
 fi
 
 test_deploy_job
+test_deploy_job_dry_run
+test_job_no_result_file
 
 echo "" >&2
 echo "--- Log Streaming Tests ---" >&2

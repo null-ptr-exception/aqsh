@@ -29,10 +29,12 @@ type TaskPayload struct {
 }
 
 type TaskResult struct {
-	ExitCode int    `json:"exit_code"`
-	Output   string `json:"output"`
-	Error    string `json:"error,omitempty"`
+	ExitCode int     `json:"exit_code"`
+	Data     *string `json:"data,omitempty"`
+	Error    string  `json:"error,omitempty"`
 }
+
+const maxResultSize = 1024 * 1024 // 1MB
 
 type Worker struct {
 	cfg        *config.Config
@@ -108,6 +110,14 @@ func (w *Worker) executeScript(ctx context.Context, resultWriter io.Writer, task
 		scriptPath = "./" + scriptPath
 	}
 
+	// Create results directory and generate result file path
+	// Don't create the file - let the script decide whether to write to it
+	if err := os.MkdirAll(w.cfg.ResultsDir, 0755); err != nil {
+		return nil, fmt.Errorf("create results dir: %w", err)
+	}
+	resultFilePath := filepath.Join(w.cfg.ResultsDir, "aqsh-result-"+taskID)
+	defer os.Remove(resultFilePath)
+
 	cmd := exec.CommandContext(ctx, scriptPath)
 	cmd.Dir = w.cfg.ScriptsDir
 
@@ -117,6 +127,7 @@ func (w *Worker) executeScript(ctx context.Context, resultWriter io.Writer, task
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
 	cmd.Env = append(cmd.Env, "AQSH_TASK_ID="+taskID)
+	cmd.Env = append(cmd.Env, "AQSH_RESULT_FILE="+resultFilePath)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -132,7 +143,6 @@ func (w *Worker) executeScript(ctx context.Context, resultWriter io.Writer, task
 		return nil, fmt.Errorf("start command: %w", err)
 	}
 
-	var output strings.Builder
 	var wg sync.WaitGroup
 	wg.Add(2)
 
@@ -141,8 +151,6 @@ func (w *Worker) executeScript(ctx context.Context, resultWriter io.Writer, task
 		scanner := bufio.NewScanner(r)
 		for scanner.Scan() {
 			line := scanner.Text()
-			output.WriteString(line)
-			output.WriteString("\n")
 			_ = w.logStream.Write(ctx, taskID, prefix+line)
 		}
 	}
@@ -166,14 +174,52 @@ func (w *Worker) executeScript(ctx context.Context, resultWriter io.Writer, task
 		} else {
 			return &TaskResult{
 				ExitCode: -1,
-				Output:   output.String(),
 				Error:    err.Error(),
 			}, nil
 		}
 	}
 
-	return &TaskResult{
+	// Read result file if it exists and has content
+	result := &TaskResult{
 		ExitCode: exitCode,
-		Output:   output.String(),
-	}, nil
+	}
+
+	if data, err := w.readResultFile(resultFilePath); err == nil && data != nil {
+		result.Data = data
+	}
+
+	return result, nil
+}
+
+// readResultFile reads the result file and returns:
+// - nil, nil: file doesn't exist or is empty (no result)
+// - *string, nil: file has content
+// - nil, error: file too large or read error
+func (w *Worker) readResultFile(path string) (*string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		// File doesn't exist = no result (not an error)
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	if info.Size() == 0 {
+		// Empty file = empty result (distinct from no result)
+		empty := ""
+		return &empty, nil
+	}
+
+	if info.Size() > maxResultSize {
+		return nil, fmt.Errorf("result file too large: %d bytes (max %d)", info.Size(), maxResultSize)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	result := string(data)
+	return &result, nil
 }
