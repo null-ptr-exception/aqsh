@@ -67,7 +67,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: aqsh-scripts
+  name: aqsh-tasks
   namespace: aqsh
 data:
   hello.sh: |
@@ -194,15 +194,15 @@ spec:
           value: redis:6379
         - name: AQSH_HOOKS_CONFIG
           value: /etc/aqsh/hooks.yaml
-        - name: AQSH_SCRIPTS_DIR
-          value: /scripts
+        - name: AQSH_TASKS_DIR
+          value: /tasks
         - name: AQSH_WORKER_QUEUES
           value: default,long-running
         volumeMounts:
         - name: hooks
           mountPath: /etc/aqsh
-        - name: scripts
-          mountPath: /scripts
+        - name: tasks
+          mountPath: /tasks
         resources:
           requests:
             memory: "64Mi"
@@ -228,7 +228,7 @@ spec:
       - name: hooks
         configMap:
           name: aqsh-hooks
-      - name: scripts
+      - name: tasks
         configMap:
-          name: aqsh-scripts
+          name: aqsh-tasks
           defaultMode: 0755

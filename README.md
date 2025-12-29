@@ -77,7 +77,7 @@ This project originated as [DJQWSC](https://github.com/rophy/djqwsc) (Distribute
 │  │  Shell Exec   │  │   │  │  Shell Exec   │  │   │  │  Shell Exec   │  │
 │  │  os/exec.Cmd  │  │   │  │  os/exec.Cmd  │  │   │  │  os/exec.Cmd  │  │
 │  └───────────────┘  │   │  └───────────────┘  │   │  └───────────────┘  │
-│  /scripts/*         │   │  /scripts/*         │   │  /scripts/*         │
+│  /tasks/*           │   │  /tasks/*           │   │  /tasks/*           │
 └─────────────────────┘   └─────────────────────┘   └─────────────────────┘
 ```
 
@@ -285,7 +285,7 @@ defaults:
 
 hooks:
   deploy:
-    script: /scripts/deploy.sh
+    script: /tasks/deploy.sh
     description: "Deploy application to environment"
     timeout: 10m
     max_retry: 2
@@ -311,7 +311,7 @@ hooks:
         default: "false"
 
   backup:
-    script: /scripts/backup.sh
+    script: /tasks/backup.sh
     description: "Backup database to S3"
     timeout: 30m
     max_retry: 1
@@ -332,7 +332,7 @@ hooks:
         default: "s3://backups/db/"
 
   cleanup:
-    script: /scripts/cleanup.sh
+    script: /tasks/cleanup.sh
     description: "Clean up old resources"
 
     input:
@@ -500,7 +500,7 @@ If client disconnects and reconnects:
 | `AQSH_MODE` | `api`, `worker`, or `both` | `both` |
 | `AQSH_BIND` | API listen address | `0.0.0.0:8080` |
 | `AQSH_HOOKS_CONFIG` | Path to hooks.yaml | `/etc/aqsh/hooks.yaml` |
-| `AQSH_SCRIPTS_DIR` | Scripts directory | `/scripts` |
+| `AQSH_TASKS_DIR` | Tasks directory | `/tasks` |
 | `AQSH_RESULTS_DIR` | Directory for temp result files | `/var/lib/aqsh/results` |
 | `AQSH_REDIS_ADDR` | Redis address (standalone) | `localhost:6379` |
 | `AQSH_REDIS_SENTINEL_ADDRS` | Sentinel addresses (comma-separated) | - |
@@ -548,7 +548,7 @@ If client disconnects and reconnects:
 │  │  │  Pod: worker-1  │  │  Pod: worker-2  │  │  Pod: worker-3  │  │   │
 │  │  │  mode: worker   │  │  mode: worker   │  │  mode: worker   │  │   │
 │  │  │  concurrency:10 │  │  concurrency:10 │  │  concurrency:10 │  │   │
-│  │  │  /scripts/*     │  │  /scripts/*     │  │  /scripts/*     │  │   │
+│  │  │  /tasks/*       │  │  /tasks/*       │  │  /tasks/*       │  │   │
 │  │  └─────────────────┘  └─────────────────┘  └─────────────────┘  │   │
 │  └─────────────────────────────────────────────────────────────────┘   │
 │                                                                         │
@@ -578,17 +578,17 @@ data:
       max_retry: 3
     hooks:
       deploy:
-        script: /scripts/deploy.sh
+        script: /tasks/deploy.sh
         input:
           - name: version
             env: VERSION
             required: true
 ---
-# ConfigMap for scripts
+# ConfigMap for tasks
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: aqsh-scripts
+  name: aqsh-tasks
   namespace: aqsh
 data:
   deploy.sh: |
@@ -669,15 +669,15 @@ spec:
         volumeMounts:
         - name: hooks
           mountPath: /etc/aqsh
-        - name: scripts
-          mountPath: /scripts
+        - name: tasks
+          mountPath: /tasks
       volumes:
       - name: hooks
         configMap:
           name: aqsh-hooks
-      - name: scripts
+      - name: tasks
         configMap:
-          name: aqsh-scripts
+          name: aqsh-tasks
           defaultMode: 0755
 ---
 # API Service
@@ -810,10 +810,10 @@ Since aqsh uses Redis instead of MySQL/etcd, there's no data migration path. Job
 DJQWSC (webhook `hooks.yaml`):
 ```yaml
 - id: deploy
-  execute-command: /scripts/run-job.sh
+  execute-command: /tasks/run-job.sh
   pass-arguments-to-command:
     - source: string
-      name: /scripts/deploy.sh
+      name: /tasks/deploy.sh
   pass-environment-to-command:
     - source: payload
       name: version
@@ -824,7 +824,7 @@ aqsh (`hooks.yaml`):
 ```yaml
 hooks:
   deploy:
-    script: /scripts/deploy.sh
+    script: /tasks/deploy.sh
     input:
       - name: version
         env: VERSION

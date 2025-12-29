@@ -9,7 +9,7 @@ services:
       AQSH_REDIS_ADDR: redis:6379
     volumes:
       - ./hooks.yaml:/etc/aqsh/hooks.yaml:ro
-      - ./scripts:/scripts:ro
+      - ./tasks:/tasks:ro
     depends_on:
       - redis
 

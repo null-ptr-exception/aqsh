@@ -119,7 +119,7 @@ func (w *Worker) executeScript(ctx context.Context, resultWriter io.Writer, task
 	defer os.Remove(resultFilePath)
 
 	cmd := exec.CommandContext(ctx, scriptPath)
-	cmd.Dir = w.cfg.ScriptsDir
+	cmd.Dir = w.cfg.TasksDir
 
 	// Build environment
 	cmd.Env = os.Environ()

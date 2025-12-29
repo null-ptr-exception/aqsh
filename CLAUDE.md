@@ -36,7 +36,7 @@ The `README.md` contains the full design document. Read it first to understand:
 
 - Go 1.21+
 - Redis (or use Docker)
-- Scripts in `/scripts` directory
+- Task scripts in `/tasks` directory
 
 ### Project Structure (Planned)
 
@@ -52,7 +52,8 @@ aqsh/
 │   ├── worker/             # Asynq task handler, shell execution
 │   └── logs/               # Redis Streams log handling
 ├── hooks.yaml              # Example hook configuration
-├── scripts/                # Example scripts
+├── tasks/                  # Example task scripts
+├── scripts/                # Build scripts (build.sh)
 ├── go.mod
 ├── go.sum
 ├── Dockerfile

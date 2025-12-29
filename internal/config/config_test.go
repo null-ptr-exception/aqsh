@@ -12,7 +12,7 @@ func TestLoad(t *testing.T) {
 		"AQSH_MODE",
 		"AQSH_BIND",
 		"AQSH_HOOKS_CONFIG",
-		"AQSH_SCRIPTS_DIR",
+		"AQSH_TASKS_DIR",
 		"AQSH_WORKER_CONCURRENCY",
 		"AQSH_WORKER_QUEUES",
 		"AQSH_LOG_RETENTION",
@@ -39,8 +39,8 @@ func TestLoad(t *testing.T) {
 		if cfg.HooksConfig != "/etc/aqsh/hooks.yaml" {
 			t.Errorf("expected HooksConfig '/etc/aqsh/hooks.yaml', got %q", cfg.HooksConfig)
 		}
-		if cfg.ScriptsDir != "/scripts" {
-			t.Errorf("expected ScriptsDir '/scripts', got %q", cfg.ScriptsDir)
+		if cfg.TasksDir != "/tasks" {
+			t.Errorf("expected TasksDir '/tasks', got %q", cfg.TasksDir)
 		}
 		if cfg.WorkerConcurrency != 10 {
 			t.Errorf("expected WorkerConcurrency 10, got %d", cfg.WorkerConcurrency)
