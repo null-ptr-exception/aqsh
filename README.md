@@ -23,7 +23,7 @@ This project originated as [DJQWSC](https://github.com/rophy/djqwsc) (Distribute
 ### Goals
 
 1. **Simple** - Minimal code, easy to understand and maintain
-2. **Explicit** - Clear hook configuration with input validation
+2. **Explicit** - Clear task configuration with input validation
 3. **Scalable** - Horizontal worker scaling via Redis
 4. **Observable** - Real-time log streaming, Prometheus metrics
 5. **Secure** - Input validation prevents injection attacks
@@ -847,4 +847,4 @@ Not in scope for initial release, but possible future additions:
 1. **Result size limits** - How large can script output be? (Redis memory)
 2. **Log format** - Plain text vs structured (JSON lines)?
 3. **Authentication** - API auth for multi-tenant scenarios?
-4. **Rate limiting** - Per-hook or global rate limits?
+4. **Rate limiting** - Per-task or global rate limits?

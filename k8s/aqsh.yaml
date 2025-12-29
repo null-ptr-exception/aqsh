@@ -1,16 +1,16 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: aqsh-hooks
+  name: aqsh-tasks-config
   namespace: aqsh
 data:
-  hooks.yaml: |
+  tasks.yaml: |
     defaults:
       timeout: 5m
       max_retry: 3
       queue: default
 
-    hooks:
+    tasks:
       hello:
         script: hello.sh
         description: "Simple hello world test"
@@ -59,7 +59,7 @@ data:
 
       slow:
         script: slow.sh
-        description: "Slow job for testing log streaming"
+        description: "Slow task for testing log streaming"
         timeout: 1m
         max_retry: 0
         input: []
@@ -67,7 +67,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: aqsh-tasks
+  name: aqsh-task-scripts
   namespace: aqsh
 data:
   hello.sh: |
@@ -133,12 +133,12 @@ data:
   slow.sh: |
     #!/bin/bash
     set -e
-    echo "Starting slow job..."
+    echo "Starting slow task..."
     for i in 1 2 3 4 5; do
         echo "Step $i of 5"
         sleep 1
     done
-    echo "Slow job completed!"
+    echo "Slow task completed!"
 ---
 apiVersion: v1
 kind: Service
@@ -192,16 +192,16 @@ spec:
           value: "0.0.0.0:8080"
         - name: AQSH_REDIS_ADDR
           value: redis:6379
-        - name: AQSH_HOOKS_CONFIG
-          value: /etc/aqsh/hooks.yaml
+        - name: AQSH_TASKS_CONFIG
+          value: /etc/aqsh/tasks.yaml
         - name: AQSH_TASKS_DIR
           value: /tasks
         - name: AQSH_WORKER_QUEUES
           value: default,long-running
         volumeMounts:
-        - name: hooks
+        - name: tasks-config
           mountPath: /etc/aqsh
-        - name: tasks
+        - name: task-scripts
           mountPath: /tasks
         resources:
           requests:
@@ -225,10 +225,10 @@ spec:
           failureThreshold: 3
 
       volumes:
-      - name: hooks
+      - name: tasks-config
         configMap:
-          name: aqsh-hooks
-      - name: tasks
+          name: aqsh-tasks-config
+      - name: task-scripts
         configMap:
-          name: aqsh-tasks
+          name: aqsh-task-scripts
           defaultMode: 0755
