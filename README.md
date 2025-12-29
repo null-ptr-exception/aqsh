@@ -4,11 +4,11 @@
 
 ## Overview
 
-aqsh is a simple, production-ready job queue for executing shell scripts asynchronously. Built on [Asynq](https://github.com/hibiken/asynq) and Redis.
+aqsh is a simple, production-ready task queue for executing shell scripts asynchronously. Built on [Asynq](https://github.com/hibiken/asynq) and Redis.
 
 ### Background
 
-This project originated as [DJQWSC](https://github.com/rophy/djqwsc) (Distributed Job Queue With Shell Scripts), a fork of Fireworq + webhook. aqsh is a complete rewrite with a cleaner architecture.
+This project originated as [DJQWSC](https://github.com/rophy/djqwsc) (Distributed Job Queue With Shell Scripts), a fork of Fireworq + webhook. aqsh is a complete rewrite with a cleaner architecture. (Note: DJQWSC used "job" terminology; aqsh uses "task" to align with Asynq.)
 
 ### Why Rewrite?
 
@@ -36,8 +36,8 @@ This project originated as [DJQWSC](https://github.com/rophy/djqwsc) (Distribute
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                                Clients                                  │
 │                                   │                                     │
-│            POST /jobs/deploy      │     GET /jobs/{id}                  │
-│            {"version": "1.2.3"}   │     GET /jobs/{id}/logs             │
+│            POST /tasks/deploy     │     GET /tasks/{id}                 │
+│            {"version": "1.2.3"}   │     GET /tasks/{id}/logs            │
 │                                   │                                     │
 └───────────────────────────────────┼─────────────────────────────────────┘
                                     │
@@ -45,8 +45,8 @@ This project originated as [DJQWSC](https://github.com/rophy/djqwsc) (Distribute
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                          API Pods (stateless)                           │
 │  ┌───────────────────────────────────────────────────────────────────┐  │
-│  │  • HTTP API (submit jobs, query status, stream logs)              │  │
-│  │  • Input validation against hook config                           │  │
+│  │  • HTTP API (submit tasks, query status, stream logs)             │  │
+│  │  • Input validation against task config                           │  │
 │  │  • Asynq Client (enqueue tasks)                                   │  │
 │  │  • Asynq Inspector (query task status)                            │  │
 │  └───────────────────────────────────────────────────────────────────┘  │
@@ -476,7 +476,7 @@ Input validation prevents:
 |---------|-------|
 | `XADD logs:{id} * line "text"` | Append log line (worker) |
 | `XREAD BLOCK 5000 STREAMS logs:{id} {lastID}` | Read new entries (API) |
-| `XRANGE logs:{id} - +` | Read all entries (completed job) |
+| `XRANGE logs:{id} - +` | Read all entries (completed task) |
 | `EXPIRE logs:{id} 86400` | Set 24h TTL |
 
 ### Client Reconnection
@@ -503,7 +503,7 @@ If client disconnects and reconnects:
 | `AQSH_REDIS_SENTINEL_ADDRS` | Sentinel addresses (comma-separated) | - |
 | `AQSH_REDIS_SENTINEL_MASTER` | Sentinel master name | `mymaster` |
 | `AQSH_REDIS_PASSWORD` | Redis password | - |
-| `AQSH_WORKER_CONCURRENCY` | Concurrent jobs per worker | `10` |
+| `AQSH_WORKER_CONCURRENCY` | Concurrent tasks per worker | `10` |
 | `AQSH_WORKER_QUEUES` | Queues to process (comma-separated) | `default` |
 | `AQSH_LOG_RETENTION` | Log stream retention | `24h` |
 | `AQSH_RESULT_RETENTION` | Completed task retention | `72h` |
@@ -747,7 +747,7 @@ spec:
 
 ---
 
-## Job Lifecycle
+## Task Lifecycle
 
 ```
 ┌──────────┐     ┌──────────┐     ┌──────────┐     ┌───────────┐
@@ -800,14 +800,14 @@ aqsh is a complete rewrite with different storage backend. Migration options:
 2. **Clean cutover** - Wait for DJQWSC queue to drain, switch to aqsh
 3. **Fresh start** - aqsh uses new orphan branch, treat as separate project
 
-Since aqsh uses Redis instead of MySQL/etcd, there's no data migration path. Jobs in DJQWSC queue should complete before switching.
+Since aqsh uses Redis instead of MySQL/etcd, there's no data migration path. Jobs in the DJQWSC queue should complete before switching.
 
 ### Task Configuration Migration
 
 DJQWSC (webhook `hooks.yaml`):
 ```yaml
 - id: deploy
-  execute-command: /tasks/run-job.sh
+  execute-command: /tasks/run-task.sh
   pass-arguments-to-command:
     - source: string
       name: /tasks/deploy.sh
@@ -834,10 +834,10 @@ tasks:
 
 Not in scope for initial release, but possible future additions:
 
-1. **Job dependencies** - Run job B after job A completes
-2. **Scheduled jobs** - Cron-like scheduling (Asynq supports this)
-3. **Job cancellation** - Cancel pending/running jobs
-4. **Webhooks** - Notify external systems on job completion
+1. **Task dependencies** - Run task B after task A completes
+2. **Scheduled tasks** - Cron-like scheduling (Asynq supports this)
+3. **Task cancellation** - Cancel pending/running tasks
+4. **Webhooks** - Notify external systems on task completion
 5. **Multi-tenancy** - Namespace isolation
 
 ---
