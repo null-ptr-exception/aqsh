@@ -348,10 +348,10 @@ test_realtime_log_streaming() {
         fail "Complete logs contain final step" "Step 5 of 5" "$LOGS"
     fi
 
-    if echo "$LOGS" | grep -q 'Slow job completed!'; then
+    if echo "$LOGS" | grep -q 'Slow task completed!'; then
         pass "Complete logs contain completion message"
     else
-        fail "Complete logs contain completion message" "Slow job completed!" "$LOGS"
+        fail "Complete logs contain completion message" "Slow task completed!" "$LOGS"
     fi
 
     if echo "$LOGS" | grep -q 'event: eof'; then

@@ -61,7 +61,7 @@ tasks:
 
   slow:
     script: slow.sh
-    description: "Slow job for testing log streaming"
+    description: "Slow task for testing log streaming"
     timeout: 1m
     max_retry: 0
     input: []
