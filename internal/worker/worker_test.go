@@ -5,7 +5,80 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/hibiken/asynq"
+	"github.com/redis/go-redis/v9"
+	"github.com/rophy/aqsh/internal/config"
+	"github.com/rophy/aqsh/internal/tasks"
 )
+
+func TestNew(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	cfg := &config.Config{
+		LogRetention:    time.Hour,
+		ResultRetention: time.Hour,
+		WorkerQueues:    []string{"default", "critical"},
+	}
+
+	tasksConfig := &tasks.TasksConfig{
+		Tasks: map[string]tasks.TaskDef{
+			"test": {Script: "test.sh"},
+		},
+	}
+
+	asynqOpt := asynq.RedisClientOpt{Addr: mr.Addr()}
+
+	w := New(cfg, tasksConfig, rdb, asynqOpt)
+
+	if w == nil {
+		t.Fatal("expected non-nil Worker")
+	}
+	if w.cfg != cfg {
+		t.Error("expected cfg to be set")
+	}
+	if w.tasks != tasksConfig {
+		t.Error("expected tasks to be set")
+	}
+	if w.rdb != rdb {
+		t.Error("expected rdb to be set")
+	}
+	if w.logStream == nil {
+		t.Error("expected logStream to be initialized")
+	}
+}
+
+func TestTaskPayloadAndResult(t *testing.T) {
+	t.Run("TaskPayload marshaling", func(t *testing.T) {
+		payload := TaskPayload{
+			Name:      "deploy",
+			CreatedAt: time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),
+			Env:       map[string]string{"DEPLOY_ENV": "production"},
+			Payload:   map[string]any{"replicas": 3},
+		}
+
+		bytes, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("failed to marshal: %v", err)
+		}
+
+		var decoded TaskPayload
+		if err := json.Unmarshal(bytes, &decoded); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+
+		if decoded.Name != "deploy" {
+			t.Errorf("expected name='deploy', got %q", decoded.Name)
+		}
+		if decoded.Env["DEPLOY_ENV"] != "production" {
+			t.Errorf("expected env DEPLOY_ENV='production', got %q", decoded.Env["DEPLOY_ENV"])
+		}
+	})
+}
 
 func TestReadResultFile(t *testing.T) {
 	// Create a temporary worker with minimal config
