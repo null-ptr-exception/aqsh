@@ -24,13 +24,13 @@ WORKDIR /app
 # Copy binary from builder
 COPY --from=builder /build/aqsh /usr/local/bin/aqsh
 
-# Create directories for hooks and tasks
+# Create directories for config and task scripts
 RUN mkdir -p /etc/aqsh /tasks
 
 # Default environment
 ENV AQSH_MODE=both \
     AQSH_BIND=0.0.0.0:8080 \
-    AQSH_HOOKS_CONFIG=/etc/aqsh/hooks.yaml \
+    AQSH_TASKS_CONFIG=/etc/aqsh/tasks.yaml \
     AQSH_TASKS_DIR=/tasks \
     AQSH_REDIS_ADDR=redis:6379
 

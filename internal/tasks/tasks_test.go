@@ -1,4 +1,4 @@
-package hooks
+package tasks
 
 import (
 	"os"
@@ -160,10 +160,10 @@ func TestInputValidate(t *testing.T) {
 
 func TestInputGetEnvValue(t *testing.T) {
 	tests := []struct {
-		name   string
-		input  Input
-		value  any
-		want   string
+		name  string
+		input Input
+		value any
+		want  string
 	}{
 		{
 			name:  "string value",
@@ -213,18 +213,18 @@ func TestInputGetEnvValue(t *testing.T) {
 	}
 }
 
-func TestHooksConfigLoad(t *testing.T) {
-	// Create a temporary hooks.yaml
+func TestTasksConfigLoad(t *testing.T) {
+	// Create a temporary tasks.yaml
 	content := `
 defaults:
   timeout: 5m
   max_retry: 3
   queue: default
 
-hooks:
+tasks:
   test:
     script: test.sh
-    description: "Test hook"
+    description: "Test task"
     input:
       - name: foo
         env: FOO
@@ -232,7 +232,7 @@ hooks:
         type: string
 `
 	tmpDir := t.TempDir()
-	tmpFile := filepath.Join(tmpDir, "hooks.yaml")
+	tmpFile := filepath.Join(tmpDir, "tasks.yaml")
 	if err := os.WriteFile(tmpFile, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -242,32 +242,32 @@ hooks:
 		t.Fatalf("Load() error = %v", err)
 	}
 
-	if len(cfg.Hooks) != 1 {
-		t.Errorf("expected 1 hook, got %d", len(cfg.Hooks))
+	if len(cfg.Tasks) != 1 {
+		t.Errorf("expected 1 task, got %d", len(cfg.Tasks))
 	}
 
-	hook, ok := cfg.Hooks["test"]
+	task, ok := cfg.Tasks["test"]
 	if !ok {
-		t.Fatal("hook 'test' not found")
+		t.Fatal("task 'test' not found")
 	}
 
-	if hook.Script != "test.sh" {
-		t.Errorf("expected script 'test.sh', got %q", hook.Script)
+	if task.Script != "test.sh" {
+		t.Errorf("expected script 'test.sh', got %q", task.Script)
 	}
 
-	if len(hook.Input) != 1 {
-		t.Errorf("expected 1 input, got %d", len(hook.Input))
+	if len(task.Input) != 1 {
+		t.Errorf("expected 1 input, got %d", len(task.Input))
 	}
 }
 
-func TestHooksConfigResolve(t *testing.T) {
-	cfg := &HooksConfig{
-		Defaults: HookDefaults{
+func TestTasksConfigResolve(t *testing.T) {
+	cfg := &TasksConfig{
+		Defaults: TaskDefaults{
 			Timeout:  "5m",
 			MaxRetry: 3,
 			Queue:    "default",
 		},
-		Hooks: map[string]Hook{
+		Tasks: map[string]TaskDef{
 			"test": {
 				Script:      "test.sh",
 				Description: "Test",
@@ -306,21 +306,21 @@ func TestHooksConfigResolve(t *testing.T) {
 		}
 	})
 
-	t.Run("resolve unknown hook", func(t *testing.T) {
+	t.Run("resolve unknown task", func(t *testing.T) {
 		_, err := cfg.Resolve("unknown")
 		if err == nil {
-			t.Error("expected error for unknown hook")
+			t.Error("expected error for unknown task")
 		}
 	})
 }
 
 func TestValidatePayload(t *testing.T) {
-	cfg := &HooksConfig{
-		Defaults: HookDefaults{
+	cfg := &TasksConfig{
+		Defaults: TaskDefaults{
 			Timeout: "5m",
 			Queue:   "default",
 		},
-		Hooks: map[string]Hook{
+		Tasks: map[string]TaskDef{
 			"deploy": {
 				Script: "deploy.sh",
 				Input: []Input{

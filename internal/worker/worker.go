@@ -12,20 +12,22 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
 	"github.com/rophy/aqsh/internal/config"
-	"github.com/rophy/aqsh/internal/hooks"
 	"github.com/rophy/aqsh/internal/logs"
+	"github.com/rophy/aqsh/internal/tasks"
 )
 
 const TaskType = "aqsh:job"
 
 type TaskPayload struct {
-	Hook    string            `json:"hook"`
-	Env     map[string]string `json:"env"`
-	Payload map[string]any    `json:"payload"`
+	Name      string            `json:"name"`
+	CreatedAt time.Time         `json:"created_at"`
+	Env       map[string]string `json:"env"`
+	Payload   map[string]any    `json:"payload"`
 }
 
 type TaskResult struct {
@@ -37,16 +39,18 @@ type TaskResult struct {
 const maxResultSize = 1024 * 1024 // 1MB
 
 type Worker struct {
-	cfg        *config.Config
-	hooks      *hooks.HooksConfig
-	logStream  *logs.LogStreamer
-	asynqOpt   asynq.RedisConnOpt
+	cfg       *config.Config
+	tasks     *tasks.TasksConfig
+	rdb       redis.UniversalClient
+	logStream *logs.LogStreamer
+	asynqOpt  asynq.RedisConnOpt
 }
 
-func New(cfg *config.Config, hooksConfig *hooks.HooksConfig, rdb redis.UniversalClient, asynqOpt asynq.RedisConnOpt) *Worker {
+func New(cfg *config.Config, tasksConfig *tasks.TasksConfig, rdb redis.UniversalClient, asynqOpt asynq.RedisConnOpt) *Worker {
 	return &Worker{
 		cfg:       cfg,
-		hooks:     hooksConfig,
+		tasks:     tasksConfig,
+		rdb:       rdb,
 		logStream: logs.NewLogStreamer(rdb, cfg.LogRetention),
 		asynqOpt:  asynqOpt,
 	}
@@ -64,9 +68,22 @@ func (w *Worker) Run(ctx context.Context) error {
 	})
 
 	mux := asynq.NewServeMux()
+	mux.Use(w.startedAtMiddleware)
 	mux.HandleFunc(TaskType, w.handleTask)
 
 	return srv.Run(mux)
+}
+
+const MetaKeyPrefix = "aqsh:meta:"
+
+func (w *Worker) startedAtMiddleware(h asynq.Handler) asynq.Handler {
+	return asynq.HandlerFunc(func(ctx context.Context, t *asynq.Task) error {
+		taskID, _ := asynq.GetTaskID(ctx)
+		metaKey := MetaKeyPrefix + taskID
+		w.rdb.HSet(ctx, metaKey, "started_at", time.Now().UnixMilli())
+		w.rdb.Expire(ctx, metaKey, w.cfg.ResultRetention)
+		return h.ProcessTask(ctx, t)
+	})
 }
 
 func (w *Worker) handleTask(ctx context.Context, task *asynq.Task) error {
@@ -80,12 +97,12 @@ func (w *Worker) handleTask(ctx context.Context, task *asynq.Task) error {
 		return fmt.Errorf("unmarshal payload: %w", err)
 	}
 
-	hook, err := w.hooks.Resolve(payload.Hook)
+	taskDef, err := w.tasks.Resolve(payload.Name)
 	if err != nil {
-		return fmt.Errorf("resolve hook: %w", err)
+		return fmt.Errorf("resolve task: %w", err)
 	}
 
-	result, err := w.executeScript(ctx, task.ResultWriter(), taskID, hook, payload.Env)
+	result, err := w.executeScript(ctx, task.ResultWriter(), taskID, taskDef, payload.Env)
 	if err != nil {
 		return err
 	}
@@ -102,8 +119,8 @@ func (w *Worker) handleTask(ctx context.Context, task *asynq.Task) error {
 	return nil
 }
 
-func (w *Worker) executeScript(ctx context.Context, resultWriter io.Writer, taskID string, hook *hooks.ResolvedHook, env map[string]string) (*TaskResult, error) {
-	scriptPath := hook.Script
+func (w *Worker) executeScript(ctx context.Context, resultWriter io.Writer, taskID string, taskDef *tasks.ResolvedTask, env map[string]string) (*TaskResult, error) {
+	scriptPath := taskDef.Script
 	// If script is relative and doesn't contain a path separator, prepend ./
 	// This ensures exec finds it in the working directory
 	if !filepath.IsAbs(scriptPath) && !strings.Contains(scriptPath, string(filepath.Separator)) {

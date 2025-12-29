@@ -12,14 +12,14 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/rophy/aqsh/internal/api"
 	"github.com/rophy/aqsh/internal/config"
-	"github.com/rophy/aqsh/internal/hooks"
+	"github.com/rophy/aqsh/internal/tasks"
 	"github.com/rophy/aqsh/internal/worker"
 	"golang.org/x/sync/errgroup"
 )
 
 func main() {
 	mode := flag.String("mode", "", "Run mode: api, worker, or both")
-	hooksConfig := flag.String("hooks", "", "Path to hooks.yaml")
+	tasksConfig := flag.String("tasks", "", "Path to tasks.yaml")
 	bind := flag.String("bind", "", "API bind address")
 	flag.Parse()
 
@@ -29,8 +29,8 @@ func main() {
 	if *mode != "" {
 		cfg.Mode = *mode
 	}
-	if *hooksConfig != "" {
-		cfg.HooksConfig = *hooksConfig
+	if *tasksConfig != "" {
+		cfg.TasksConfig = *tasksConfig
 	}
 	if *bind != "" {
 		cfg.Bind = *bind
@@ -43,12 +43,12 @@ func main() {
 		log.Fatalf("Invalid mode %q: must be api, worker, or both", cfg.Mode)
 	}
 
-	// Load hooks config
-	hooksCfg, err := hooks.Load(cfg.HooksConfig)
+	// Load tasks config
+	tasksCfg, err := tasks.Load(cfg.TasksConfig)
 	if err != nil {
-		log.Fatalf("Failed to load hooks config: %v", err)
+		log.Fatalf("Failed to load tasks config: %v", err)
 	}
-	log.Printf("Loaded %d hooks from %s", len(hooksCfg.Hooks), cfg.HooksConfig)
+	log.Printf("Loaded %d tasks from %s", len(tasksCfg.Tasks), cfg.TasksConfig)
 
 	// Setup Redis
 	var rdb redis.UniversalClient
@@ -102,14 +102,14 @@ func main() {
 	g, ctx := errgroup.WithContext(ctx)
 
 	if cfg.Mode == "api" || cfg.Mode == "both" {
-		apiServer := api.New(cfg, hooksCfg, rdb, asynqOpt)
+		apiServer := api.New(cfg, tasksCfg, rdb, asynqOpt)
 		g.Go(func() error {
 			return apiServer.Run(ctx)
 		})
 	}
 
 	if cfg.Mode == "worker" || cfg.Mode == "both" {
-		workerServer := worker.New(cfg, hooksCfg, rdb, asynqOpt)
+		workerServer := worker.New(cfg, tasksCfg, rdb, asynqOpt)
 		g.Go(func() error {
 			return workerServer.Run(ctx)
 		})

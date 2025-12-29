@@ -18,8 +18,8 @@ aqsh is a clean-slate rewrite built on [Asynq](https://github.com/hibiken/asynq)
 
 The `README.md` contains the full design document. Read it first to understand:
 - Architecture (API pods + Worker pods + Redis)
-- API endpoints (`POST /jobs/{hook}`, `GET /jobs/{id}`, etc.)
-- Hook configuration format (`hooks.yaml`)
+- API endpoints (`POST /tasks/{name}`, `GET /tasks/{id}`, etc.)
+- Task configuration format (`tasks.yaml`)
 - Log streaming via Redis Streams
 - Input validation schema
 
@@ -27,7 +27,7 @@ The `README.md` contains the full design document. Read it first to understand:
 
 1. **Single binary** - One Go binary with `--mode=api|worker|both`
 2. **Redis backend** - Asynq uses Redis for queue, we also use Redis Streams for logs
-3. **Explicit hook config** - All inputs must be declared with validation rules
+3. **Explicit task config** - All inputs must be declared with validation rules
 4. **Horizontal scaling** - Multiple worker pods all actively process jobs
 
 ## Development
@@ -48,10 +48,10 @@ aqsh/
 ├── internal/
 │   ├── api/                # HTTP handlers
 │   ├── config/             # Configuration loading
-│   ├── hooks/              # Hook config parsing & validation
+│   ├── tasks/              # Task config parsing & validation
 │   ├── worker/             # Asynq task handler, shell execution
 │   └── logs/               # Redis Streams log handling
-├── hooks.yaml              # Example hook configuration
+├── tasks.yaml              # Task configuration
 ├── tasks/                  # Example task scripts
 ├── scripts/                # Build scripts (build.sh)
 ├── go.mod
@@ -102,9 +102,9 @@ curl -N http://localhost:8080/jobs/{id}/logs
 
 ### What Worked
 
-- The simplified API (`POST /jobs/{hook}` vs Fireworq's more complex API)
+- The simplified API (`POST /tasks/{name}` vs Fireworq's more complex API)
 - Job status tracking and result storage
-- The concept of hooks mapping to shell scripts
+- The concept of named tasks mapping to shell scripts
 
 ### What Didn't Work
 
@@ -147,8 +147,8 @@ asynq.RedisFailoverClientOpt{
 2. Set up Go module: `go mod init github.com/rophy/aqsh`
 3. Start with minimal working version:
    - Config loading
-   - Single hook
-   - Submit job → execute script → return result
+   - Single task type
+   - Submit task → execute script → return result
 4. Add features incrementally:
    - Input validation
    - Log streaming

@@ -15,24 +15,24 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 	"github.com/rophy/aqsh/internal/config"
-	"github.com/rophy/aqsh/internal/hooks"
 	"github.com/rophy/aqsh/internal/logs"
+	"github.com/rophy/aqsh/internal/tasks"
 	"github.com/rophy/aqsh/internal/worker"
 )
 
 type Server struct {
 	cfg       *config.Config
-	hooks     *hooks.HooksConfig
+	tasks     *tasks.TasksConfig
 	client    *asynq.Client
 	inspector *asynq.Inspector
 	logStream *logs.LogStreamer
 	rdb       redis.UniversalClient
 }
 
-func New(cfg *config.Config, hooksConfig *hooks.HooksConfig, rdb redis.UniversalClient, asynqOpt asynq.RedisConnOpt) *Server {
+func New(cfg *config.Config, tasksConfig *tasks.TasksConfig, rdb redis.UniversalClient, asynqOpt asynq.RedisConnOpt) *Server {
 	return &Server{
 		cfg:       cfg,
-		hooks:     hooksConfig,
+		tasks:     tasksConfig,
 		client:    asynq.NewClient(asynqOpt),
 		inspector: asynq.NewInspector(asynqOpt),
 		logStream: logs.NewLogStreamer(rdb, cfg.LogRetention),
@@ -53,10 +53,10 @@ func (s *Server) Run(ctx context.Context) error {
 	prometheus.MustRegister(queueMetrics)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /jobs/{hook}", s.handleSubmitJob)
-	mux.HandleFunc("GET /jobs/{id}", s.handleGetJob)
-	mux.HandleFunc("GET /jobs/{id}/logs", s.handleGetLogs)
-	mux.HandleFunc("GET /hooks", s.handleListHooks)
+	mux.HandleFunc("POST /tasks/{name}", s.handleSubmitTask)
+	mux.HandleFunc("GET /tasks/{id}", s.handleGetTask)
+	mux.HandleFunc("GET /tasks/{id}/logs", s.handleGetLogs)
+	mux.HandleFunc("GET /tasks", s.handleListTasks)
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.Handle("GET /metrics", promhttp.Handler())
 
@@ -76,10 +76,10 @@ func (s *Server) Run(ctx context.Context) error {
 	return srv.ListenAndServe()
 }
 
-func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
-	hookName := r.PathValue("hook")
+func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
+	taskName := r.PathValue("name")
 
-	hook, err := s.hooks.Resolve(hookName)
+	taskDef, err := s.tasks.Resolve(taskName)
 	if err != nil {
 		s.jsonError(w, http.StatusNotFound, err.Error())
 		return
@@ -91,41 +91,41 @@ func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	env, err := s.hooks.ValidatePayload(hookName, payload)
+	env, err := s.tasks.ValidatePayload(taskName, payload)
 	if err != nil {
 		s.jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	taskPayload := worker.TaskPayload{
-		Hook:    hookName,
-		Env:     env,
-		Payload: payload,
+		Name:      taskName,
+		CreatedAt: time.Now(),
+		Env:       env,
+		Payload:   payload,
 	}
 	taskBytes, _ := json.Marshal(taskPayload)
 
 	task := asynq.NewTask(worker.TaskType, taskBytes,
-		asynq.Queue(hook.Queue),
-		asynq.Timeout(hook.Timeout),
-		asynq.MaxRetry(hook.MaxRetry),
+		asynq.Queue(taskDef.Queue),
+		asynq.Timeout(taskDef.Timeout),
+		asynq.MaxRetry(taskDef.MaxRetry),
 		asynq.Retention(s.cfg.ResultRetention),
 	)
 
 	info, err := s.client.Enqueue(task)
 	if err != nil {
-		s.jsonError(w, http.StatusServiceUnavailable, "failed to enqueue job: "+err.Error())
+		s.jsonError(w, http.StatusServiceUnavailable, "failed to enqueue task: "+err.Error())
 		return
 	}
 
 	s.jsonResponse(w, http.StatusAccepted, map[string]any{
 		"id":     info.ID,
-		"hook":   hookName,
 		"queue":  info.Queue,
 		"status": "pending",
 	})
 }
 
-func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 	taskID := r.PathValue("id")
 
 	// Try all queues the worker is configured to process
@@ -147,19 +147,31 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		s.jsonError(w, http.StatusNotFound, "job not found")
+		s.jsonError(w, http.StatusNotFound, "task not found")
 		return
 	}
 
 	status := stateToStatus(info.State)
 
 	resp := map[string]any{
-		"id":         info.ID,
-		"queue":      info.Queue,
-		"status":     status,
-		"retried":    info.Retried,
-		"max_retry":  info.MaxRetry,
-		"created_at": info.NextProcessAt.Format(time.RFC3339),
+		"id":        info.ID,
+		"queue":     info.Queue,
+		"status":    status,
+		"retried":   info.Retried,
+		"max_retry": info.MaxRetry,
+	}
+
+	// Get created_at from task payload
+	var payload worker.TaskPayload
+	if err := json.Unmarshal(info.Payload, &payload); err == nil && !payload.CreatedAt.IsZero() {
+		resp["created_at"] = payload.CreatedAt.Format(time.RFC3339)
+	}
+
+	// Get started_at from Redis metadata
+	ctx := r.Context()
+	metaKey := worker.MetaKeyPrefix + taskID
+	if startedAtMs, err := s.rdb.HGet(ctx, metaKey, "started_at").Int64(); err == nil {
+		resp["started_at"] = time.UnixMilli(startedAtMs).Format(time.RFC3339)
 	}
 
 	if info.State == asynq.TaskStateCompleted || info.State == asynq.TaskStateArchived {
@@ -235,12 +247,12 @@ func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleListHooks(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 	result := make(map[string]any)
-	for name := range s.hooks.Hooks {
-		hook, _ := s.hooks.Resolve(name)
-		inputs := make([]map[string]any, 0, len(hook.Input))
-		for _, input := range hook.Input {
+	for name := range s.tasks.Tasks {
+		taskDef, _ := s.tasks.Resolve(name)
+		inputs := make([]map[string]any, 0, len(taskDef.Input))
+		for _, input := range taskDef.Input {
 			m := map[string]any{
 				"name":     input.Name,
 				"env":      input.Env,
@@ -269,15 +281,15 @@ func (s *Server) handleListHooks(w http.ResponseWriter, r *http.Request) {
 		}
 
 		result[name] = map[string]any{
-			"description": hook.Description,
-			"timeout":     hook.Timeout.String(),
-			"max_retry":   hook.MaxRetry,
-			"queue":       hook.Queue,
+			"description": taskDef.Description,
+			"timeout":     taskDef.Timeout.String(),
+			"max_retry":   taskDef.MaxRetry,
+			"queue":       taskDef.Queue,
 			"input":       inputs,
 		}
 	}
 
-	s.jsonResponse(w, http.StatusOK, map[string]any{"hooks": result})
+	s.jsonResponse(w, http.StatusOK, map[string]any{"tasks": result})
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

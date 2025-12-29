@@ -5,7 +5,7 @@ defaults:
   queue: default
   log_retention: 24h
 
-hooks:
+tasks:
   hello:
     script: hello.sh
     description: "Simple hello world test"

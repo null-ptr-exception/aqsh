@@ -10,7 +10,7 @@ import (
 type Config struct {
 	Mode              string
 	Bind              string
-	HooksConfig       string
+	TasksConfig       string
 	TasksDir          string
 	ResultsDir        string
 	WorkerConcurrency int
@@ -36,7 +36,7 @@ func Load() *Config {
 	return &Config{
 		Mode:              getEnv("AQSH_MODE", "both"),
 		Bind:              getEnv("AQSH_BIND", "0.0.0.0:8080"),
-		HooksConfig:       getEnv("AQSH_HOOKS_CONFIG", "/etc/aqsh/hooks.yaml"),
+		TasksConfig:       getEnv("AQSH_TASKS_CONFIG", "/etc/aqsh/tasks.yaml"),
 		TasksDir:          getEnv("AQSH_TASKS_DIR", "/tasks"),
 		ResultsDir:        getEnv("AQSH_RESULTS_DIR", "/var/lib/aqsh/results"),
 		WorkerConcurrency: getEnvInt("AQSH_WORKER_CONCURRENCY", 10),

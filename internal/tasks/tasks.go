@@ -1,4 +1,4 @@
-package hooks
+package tasks
 
 import (
 	"fmt"
@@ -10,12 +10,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-type HooksConfig struct {
-	Defaults HookDefaults    `yaml:"defaults"`
-	Hooks    map[string]Hook `yaml:"hooks"`
+type TasksConfig struct {
+	Defaults TaskDefaults       `yaml:"defaults"`
+	Tasks    map[string]TaskDef `yaml:"tasks"`
 }
 
-type HookDefaults struct {
+type TaskDefaults struct {
 	Timeout      string `yaml:"timeout"`
 	MaxRetry     int    `yaml:"max_retry"`
 	RetryDelay   string `yaml:"retry_delay"`
@@ -23,7 +23,7 @@ type HookDefaults struct {
 	LogRetention string `yaml:"log_retention"`
 }
 
-type Hook struct {
+type TaskDef struct {
 	Script      string  `yaml:"script"`
 	Description string  `yaml:"description"`
 	Timeout     string  `yaml:"timeout"`
@@ -151,7 +151,7 @@ func (i *Input) GetEnvValue(value any) string {
 	}
 }
 
-type ResolvedHook struct {
+type ResolvedTask struct {
 	Name        string
 	Script      string
 	Description string
@@ -162,29 +162,29 @@ type ResolvedHook struct {
 	Input       []Input
 }
 
-func Load(path string) (*HooksConfig, error) {
+func Load(path string) (*TasksConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("reading hooks config: %w", err)
+		return nil, fmt.Errorf("reading tasks config: %w", err)
 	}
 
-	var cfg HooksConfig
+	var cfg TasksConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parsing hooks config: %w", err)
+		return nil, fmt.Errorf("parsing tasks config: %w", err)
 	}
 
 	return &cfg, nil
 }
 
-func (c *HooksConfig) Resolve(name string) (*ResolvedHook, error) {
-	hook, ok := c.Hooks[name]
+func (c *TasksConfig) Resolve(name string) (*ResolvedTask, error) {
+	task, ok := c.Tasks[name]
 	if !ok {
-		return nil, fmt.Errorf("hook %q not found", name)
+		return nil, fmt.Errorf("task %q not found", name)
 	}
 
 	timeout := c.Defaults.Timeout
-	if hook.Timeout != "" {
-		timeout = hook.Timeout
+	if task.Timeout != "" {
+		timeout = task.Timeout
 	}
 	if timeout == "" {
 		timeout = "5m"
@@ -195,8 +195,8 @@ func (c *HooksConfig) Resolve(name string) (*ResolvedHook, error) {
 	}
 
 	retryDelay := c.Defaults.RetryDelay
-	if hook.RetryDelay != "" {
-		retryDelay = hook.RetryDelay
+	if task.RetryDelay != "" {
+		retryDelay = task.RetryDelay
 	}
 	if retryDelay == "" {
 		retryDelay = "30s"
@@ -207,32 +207,32 @@ func (c *HooksConfig) Resolve(name string) (*ResolvedHook, error) {
 	}
 
 	maxRetry := c.Defaults.MaxRetry
-	if hook.MaxRetry != nil {
-		maxRetry = *hook.MaxRetry
+	if task.MaxRetry != nil {
+		maxRetry = *task.MaxRetry
 	}
 
 	queue := c.Defaults.Queue
-	if hook.Queue != "" {
-		queue = hook.Queue
+	if task.Queue != "" {
+		queue = task.Queue
 	}
 	if queue == "" {
 		queue = "default"
 	}
 
-	return &ResolvedHook{
+	return &ResolvedTask{
 		Name:        name,
-		Script:      hook.Script,
-		Description: hook.Description,
+		Script:      task.Script,
+		Description: task.Description,
 		Timeout:     timeoutDur,
 		MaxRetry:    maxRetry,
 		RetryDelay:  retryDelayDur,
 		Queue:       queue,
-		Input:       hook.Input,
+		Input:       task.Input,
 	}, nil
 }
 
-func (c *HooksConfig) ValidatePayload(hookName string, payload map[string]any) (map[string]string, error) {
-	hook, err := c.Resolve(hookName)
+func (c *TasksConfig) ValidatePayload(taskName string, payload map[string]any) (map[string]string, error) {
+	task, err := c.Resolve(taskName)
 	if err != nil {
 		return nil, err
 	}
@@ -241,7 +241,7 @@ func (c *HooksConfig) ValidatePayload(hookName string, payload map[string]any) (
 
 	// Check for unknown fields
 	knownFields := make(map[string]bool)
-	for _, input := range hook.Input {
+	for _, input := range task.Input {
 		knownFields[input.Name] = true
 	}
 	for k := range payload {
@@ -251,7 +251,7 @@ func (c *HooksConfig) ValidatePayload(hookName string, payload map[string]any) (
 	}
 
 	// Validate and build env
-	for _, input := range hook.Input {
+	for _, input := range task.Input {
 		value := payload[input.Name]
 		if err := input.Validate(value); err != nil {
 			return nil, err

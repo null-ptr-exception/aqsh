@@ -101,220 +101,233 @@ test_metrics_after_jobs() {
     fi
 }
 
-# Test: GET /hooks
-test_list_hooks() {
-    info "Testing GET /hooks"
-    RESP=$(curl -s "$BASE_URL/hooks")
+# Test: GET /tasks (list task types)
+test_list_tasks() {
+    info "Testing GET /tasks"
+    RESP=$(curl -s "$BASE_URL/tasks")
 
-    if echo "$RESP" | grep -q '"hooks"'; then
-        pass "GET /hooks returns hooks object"
+    if echo "$RESP" | grep -q '"tasks"'; then
+        pass "GET /tasks returns tasks object"
     else
-        fail "GET /hooks returns hooks object" '{"hooks":{...}}' "$RESP"
+        fail "GET /tasks returns tasks object" '{"tasks":{...}}' "$RESP"
     fi
 
     if echo "$RESP" | grep -q '"hello"'; then
-        pass "Hooks list contains 'hello'"
+        pass "Tasks list contains 'hello'"
     else
-        fail "Hooks list contains 'hello'" "hello in list" "$RESP"
+        fail "Tasks list contains 'hello'" "hello in list" "$RESP"
     fi
 
     if echo "$RESP" | grep -q '"deploy"'; then
-        pass "Hooks list contains 'deploy'"
+        pass "Tasks list contains 'deploy'"
     else
-        fail "Hooks list contains 'deploy'" "deploy in list" "$RESP"
+        fail "Tasks list contains 'deploy'" "deploy in list" "$RESP"
     fi
 }
 
-# Test: POST /jobs/{hook} - success
-test_submit_job_success() {
-    info "Testing POST /jobs/hello (success case)"
+# Test: POST /tasks/{name} - success
+test_submit_task_success() {
+    info "Testing POST /tasks/hello (success case)"
     RESP=$(curl -s -X POST -H "Content-Type: application/json" \
         -d '{"name":"IntegrationTest"}' \
-        "$BASE_URL/jobs/hello")
+        "$BASE_URL/tasks/hello")
 
     if echo "$RESP" | grep -q '"id"'; then
-        JOB_ID=$(echo "$RESP" | grep -o '"id":"[^"]*"' | cut -d'"' -f4)
-        pass "POST /jobs/hello returns job ID: $JOB_ID"
-        echo "$JOB_ID"
+        TASK_ID=$(echo "$RESP" | grep -o '"id":"[^"]*"' | cut -d'"' -f4)
+        pass "POST /tasks/hello returns task ID: $TASK_ID"
+        echo "$TASK_ID"
     else
-        fail "POST /jobs/hello returns job ID" '{"id":"..."}' "$RESP"
+        fail "POST /tasks/hello returns task ID" '{"id":"..."}' "$RESP"
         echo ""
     fi
 }
 
-# Test: POST /jobs/{hook} - validation error (missing required field)
-test_submit_job_validation_error() {
-    info "Testing POST /jobs/hello (missing required field)"
+# Test: POST /tasks/{name} - validation error (missing required field)
+test_submit_task_validation_error() {
+    info "Testing POST /tasks/hello (missing required field)"
     RESP=$(curl -s -X POST -H "Content-Type: application/json" \
         -d '{}' \
-        "$BASE_URL/jobs/hello")
+        "$BASE_URL/tasks/hello")
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
         -H "Content-Type: application/json" -d '{}' \
-        "$BASE_URL/jobs/hello")
+        "$BASE_URL/tasks/hello")
 
     if [ "$HTTP_CODE" = "400" ]; then
-        pass "POST /jobs/hello with missing field returns 400"
+        pass "POST /tasks/hello with missing field returns 400"
     else
-        fail "POST /jobs/hello with missing field returns 400" "400" "$HTTP_CODE"
+        fail "POST /tasks/hello with missing field returns 400" "400" "$HTTP_CODE"
     fi
 
     if echo "$RESP" | grep -q '"error"'; then
-        pass "POST /jobs/hello with missing field returns error message"
+        pass "POST /tasks/hello with missing field returns error message"
     else
-        fail "POST /jobs/hello with missing field returns error message" '{"error":"..."}' "$RESP"
+        fail "POST /tasks/hello with missing field returns error message" '{"error":"..."}' "$RESP"
     fi
 }
 
-# Test: POST /jobs/{hook} - validation error (invalid pattern)
-test_submit_job_invalid_pattern() {
-    info "Testing POST /jobs/deploy (invalid version pattern)"
+# Test: POST /tasks/{name} - validation error (invalid pattern)
+test_submit_task_invalid_pattern() {
+    info "Testing POST /tasks/deploy (invalid version pattern)"
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
         -H "Content-Type: application/json" \
         -d '{"version":"invalid","environment":"prod"}' \
-        "$BASE_URL/jobs/deploy")
+        "$BASE_URL/tasks/deploy")
 
     if [ "$HTTP_CODE" = "400" ]; then
-        pass "POST /jobs/deploy with invalid version returns 400"
+        pass "POST /tasks/deploy with invalid version returns 400"
     else
-        fail "POST /jobs/deploy with invalid version returns 400" "400" "$HTTP_CODE"
+        fail "POST /tasks/deploy with invalid version returns 400" "400" "$HTTP_CODE"
     fi
 }
 
-# Test: POST /jobs/{hook} - validation error (invalid enum)
-test_submit_job_invalid_enum() {
-    info "Testing POST /jobs/deploy (invalid environment enum)"
+# Test: POST /tasks/{name} - validation error (invalid enum)
+test_submit_task_invalid_enum() {
+    info "Testing POST /tasks/deploy (invalid environment enum)"
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
         -H "Content-Type: application/json" \
         -d '{"version":"1.0.0","environment":"invalid"}' \
-        "$BASE_URL/jobs/deploy")
+        "$BASE_URL/tasks/deploy")
 
     if [ "$HTTP_CODE" = "400" ]; then
-        pass "POST /jobs/deploy with invalid environment returns 400"
+        pass "POST /tasks/deploy with invalid environment returns 400"
     else
-        fail "POST /jobs/deploy with invalid environment returns 400" "400" "$HTTP_CODE"
+        fail "POST /tasks/deploy with invalid environment returns 400" "400" "$HTTP_CODE"
     fi
 }
 
-# Test: POST /jobs/{hook} - unknown field
-test_submit_job_unknown_field() {
-    info "Testing POST /jobs/hello (unknown field)"
+# Test: POST /tasks/{name} - unknown field
+test_submit_task_unknown_field() {
+    info "Testing POST /tasks/hello (unknown field)"
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
         -H "Content-Type: application/json" \
         -d '{"name":"test","unknown":"field"}' \
-        "$BASE_URL/jobs/hello")
+        "$BASE_URL/tasks/hello")
 
     if [ "$HTTP_CODE" = "400" ]; then
-        pass "POST /jobs/hello with unknown field returns 400"
+        pass "POST /tasks/hello with unknown field returns 400"
     else
-        fail "POST /jobs/hello with unknown field returns 400" "400" "$HTTP_CODE"
+        fail "POST /tasks/hello with unknown field returns 400" "400" "$HTTP_CODE"
     fi
 }
 
-# Test: POST /jobs/{hook} - unknown hook
-test_submit_unknown_hook() {
-    info "Testing POST /jobs/nonexistent (404)"
+# Test: POST /tasks/{name} - unknown task
+test_submit_unknown_task() {
+    info "Testing POST /tasks/nonexistent (404)"
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
         -H "Content-Type: application/json" -d '{}' \
-        "$BASE_URL/jobs/nonexistent")
+        "$BASE_URL/tasks/nonexistent")
 
     if [ "$HTTP_CODE" = "404" ]; then
-        pass "POST /jobs/nonexistent returns 404"
+        pass "POST /tasks/nonexistent returns 404"
     else
-        fail "POST /jobs/nonexistent returns 404" "404" "$HTTP_CODE"
+        fail "POST /tasks/nonexistent returns 404" "404" "$HTTP_CODE"
     fi
 }
 
-# Test: GET /jobs/{id} - success result
-test_get_job_success() {
-    local JOB_ID=$1
-    info "Testing GET /jobs/$JOB_ID (completed job)"
+# Test: GET /tasks/{id} - success result
+test_get_task_success() {
+    local TASK_ID=$1
+    info "Testing GET /tasks/$TASK_ID (completed task)"
 
-    # Wait for job to complete
+    # Wait for task to complete
     sleep 5
 
-    RESP=$(curl -s "$BASE_URL/jobs/$JOB_ID")
+    RESP=$(curl -s "$BASE_URL/tasks/$TASK_ID")
 
     if echo "$RESP" | grep -q '"status":"completed"'; then
-        pass "GET /jobs/$JOB_ID shows status=completed"
+        pass "GET /tasks/$TASK_ID shows status=completed"
     else
-        fail "GET /jobs/$JOB_ID shows status=completed" "completed" "$RESP"
+        fail "GET /tasks/$TASK_ID shows status=completed" "completed" "$RESP"
     fi
 
     if echo "$RESP" | grep -q '"exit_code":0'; then
-        pass "GET /jobs/$JOB_ID shows exit_code=0"
+        pass "GET /tasks/$TASK_ID shows exit_code=0"
     else
-        fail "GET /jobs/$JOB_ID shows exit_code=0" "exit_code:0" "$RESP"
+        fail "GET /tasks/$TASK_ID shows exit_code=0" "exit_code:0" "$RESP"
+    fi
+
+    # Check for created_at and started_at timestamps
+    if echo "$RESP" | grep -q '"created_at"'; then
+        pass "GET /tasks/$TASK_ID shows created_at"
+    else
+        fail "GET /tasks/$TASK_ID shows created_at" '"created_at":"..."' "$RESP"
+    fi
+
+    if echo "$RESP" | grep -q '"started_at"'; then
+        pass "GET /tasks/$TASK_ID shows started_at"
+    else
+        fail "GET /tasks/$TASK_ID shows started_at" '"started_at":"..."' "$RESP"
     fi
 
     # Check for result data from AQSH_RESULT_FILE (stored as string)
     if echo "$RESP" | grep -q '"data":"'; then
-        pass "GET /jobs/$JOB_ID result contains data string"
+        pass "GET /tasks/$TASK_ID result contains data string"
     else
-        fail "GET /jobs/$JOB_ID result contains data string" '"data":"..."' "$RESP"
+        fail "GET /tasks/$TASK_ID result contains data string" '"data":"..."' "$RESP"
     fi
 
     # The data string should contain the greeted field (escaped JSON)
     if echo "$RESP" | grep -q 'greeted'; then
-        pass "GET /jobs/$JOB_ID result data contains greeted field"
+        pass "GET /tasks/$TASK_ID result data contains greeted field"
     else
-        fail "GET /jobs/$JOB_ID result data contains greeted field" 'greeted' "$RESP"
+        fail "GET /tasks/$TASK_ID result data contains greeted field" 'greeted' "$RESP"
     fi
 }
 
-# Test: GET /jobs/{id} - not found
-test_get_job_not_found() {
-    info "Testing GET /jobs/nonexistent-id (not found)"
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/jobs/nonexistent-id")
+# Test: GET /tasks/{id} - not found
+test_get_task_not_found() {
+    info "Testing GET /tasks/nonexistent-id (not found)"
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/tasks/nonexistent-id")
 
     if [ "$HTTP_CODE" = "404" ]; then
-        pass "GET /jobs/nonexistent-id returns 404"
+        pass "GET /tasks/nonexistent-id returns 404"
     else
-        fail "GET /jobs/nonexistent-id returns 404" "404" "$HTTP_CODE"
+        fail "GET /tasks/nonexistent-id returns 404" "404" "$HTTP_CODE"
     fi
 }
 
-# Test: GET /jobs/{id}/logs - log streaming
-test_get_job_logs() {
-    local JOB_ID=$1
-    info "Testing GET /jobs/$JOB_ID/logs (log streaming)"
+# Test: GET /tasks/{id}/logs - log streaming
+test_get_task_logs() {
+    local TASK_ID=$1
+    info "Testing GET /tasks/$TASK_ID/logs (log streaming)"
 
-    RESP=$(curl -s "$BASE_URL/jobs/$JOB_ID/logs")
+    RESP=$(curl -s "$BASE_URL/tasks/$TASK_ID/logs")
 
     if echo "$RESP" | grep -q 'Hello, IntegrationTest'; then
-        pass "GET /jobs/$JOB_ID/logs contains output"
+        pass "GET /tasks/$TASK_ID/logs contains output"
     else
-        fail "GET /jobs/$JOB_ID/logs contains output" "Hello, IntegrationTest" "$RESP"
+        fail "GET /tasks/$TASK_ID/logs contains output" "Hello, IntegrationTest" "$RESP"
     fi
 
     if echo "$RESP" | grep -q 'event: eof'; then
-        pass "GET /jobs/$JOB_ID/logs ends with EOF event"
+        pass "GET /tasks/$TASK_ID/logs ends with EOF event"
     else
-        fail "GET /jobs/$JOB_ID/logs ends with EOF event" "event: eof" "$RESP"
+        fail "GET /tasks/$TASK_ID/logs ends with EOF event" "event: eof" "$RESP"
     fi
 }
 
-# Test: Real-time log streaming for long-running job
+# Test: Real-time log streaming for long-running task
 test_realtime_log_streaming() {
-    info "Testing real-time log streaming with slow job"
+    info "Testing real-time log streaming with slow task"
 
-    # Submit a slow job (takes ~5 seconds)
+    # Submit a slow task (takes ~5 seconds)
     RESP=$(curl -s -X POST -H "Content-Type: application/json" \
         -d '{}' \
-        "$BASE_URL/jobs/slow")
+        "$BASE_URL/tasks/slow")
 
-    JOB_ID=$(echo "$RESP" | grep -o '"id":"[^"]*"' | cut -d'"' -f4)
-    if [ -z "$JOB_ID" ]; then
-        fail "Submit slow job" "job ID" "$RESP"
+    TASK_ID=$(echo "$RESP" | grep -o '"id":"[^"]*"' | cut -d'"' -f4)
+    if [ -z "$TASK_ID" ]; then
+        fail "Submit slow task" "task ID" "$RESP"
         return
     fi
-    pass "Submitted slow job: $JOB_ID"
+    pass "Submitted slow task: $TASK_ID"
 
-    # Start streaming logs immediately (job is still running)
+    # Start streaming logs immediately (task is still running)
     # Use timeout to not wait forever, capture partial output
-    sleep 1  # Give job a moment to start
+    sleep 1  # Give task a moment to start
 
-    # Stream logs for 3 seconds while job is still running
-    LOGS=$(timeout 3 curl -s -N "$BASE_URL/jobs/$JOB_ID/logs" 2>/dev/null || true)
+    # Stream logs for 3 seconds while task is still running
+    LOGS=$(timeout 3 curl -s -N "$BASE_URL/tasks/$TASK_ID/logs" 2>/dev/null || true)
 
     # Check that we got some intermediate output (not just EOF)
     if echo "$LOGS" | grep -q 'Step 1 of 5'; then
@@ -323,11 +336,11 @@ test_realtime_log_streaming() {
         fail "Real-time streaming shows step 1" "Step 1 of 5" "$LOGS"
     fi
 
-    # Wait for job to complete
+    # Wait for task to complete
     sleep 5
 
     # Now get complete logs
-    LOGS=$(curl -s "$BASE_URL/jobs/$JOB_ID/logs")
+    LOGS=$(curl -s "$BASE_URL/tasks/$TASK_ID/logs")
 
     if echo "$LOGS" | grep -q 'Step 5 of 5'; then
         pass "Complete logs contain final step"
@@ -348,63 +361,63 @@ test_realtime_log_streaming() {
     fi
 }
 
-# Test: Deploy job with valid parameters
-test_deploy_job() {
-    info "Testing POST /jobs/deploy (valid parameters)"
+# Test: Deploy task with valid parameters
+test_deploy_task() {
+    info "Testing POST /tasks/deploy (valid parameters)"
     RESP=$(curl -s -X POST -H "Content-Type: application/json" \
         -d '{"version":"1.2.3","environment":"prod"}' \
-        "$BASE_URL/jobs/deploy")
+        "$BASE_URL/tasks/deploy")
 
     if echo "$RESP" | grep -q '"id"'; then
-        JOB_ID=$(echo "$RESP" | grep -o '"id":"[^"]*"' | cut -d'"' -f4)
-        pass "POST /jobs/deploy returns job ID: $JOB_ID"
+        TASK_ID=$(echo "$RESP" | grep -o '"id":"[^"]*"' | cut -d'"' -f4)
+        pass "POST /tasks/deploy returns task ID: $TASK_ID"
 
         # Wait and check result
         sleep 5
-        RESP=$(curl -s "$BASE_URL/jobs/$JOB_ID")
+        RESP=$(curl -s "$BASE_URL/tasks/$TASK_ID")
 
         if echo "$RESP" | grep -q '"status":"completed"'; then
-            pass "Deploy job completed successfully"
+            pass "Deploy task completed successfully"
         else
-            fail "Deploy job completed successfully" "completed" "$RESP"
+            fail "Deploy task completed successfully" "completed" "$RESP"
         fi
 
         # Check for result data from AQSH_RESULT_FILE (stored as string, search for unescaped content)
         if echo "$RESP" | grep -q 'deployed'; then
-            pass "Deploy job result data contains status=deployed"
+            pass "Deploy task result data contains status=deployed"
         else
-            fail "Deploy job result data contains status=deployed" 'deployed' "$RESP"
+            fail "Deploy task result data contains status=deployed" 'deployed' "$RESP"
         fi
 
         if echo "$RESP" | grep -q '1.2.3'; then
-            pass "Deploy job result data contains correct version"
+            pass "Deploy task result data contains correct version"
         else
-            fail "Deploy job result data contains correct version" '1.2.3' "$RESP"
+            fail "Deploy task result data contains correct version" '1.2.3' "$RESP"
         fi
     else
-        fail "POST /jobs/deploy returns job ID" '{"id":"..."}' "$RESP"
+        fail "POST /tasks/deploy returns task ID" '{"id":"..."}' "$RESP"
     fi
 }
 
-# Test: Deploy job with dry_run
-test_deploy_job_dry_run() {
-    info "Testing POST /jobs/deploy (dry run)"
+# Test: Deploy task with dry_run
+test_deploy_task_dry_run() {
+    info "Testing POST /tasks/deploy (dry run)"
     RESP=$(curl -s -X POST -H "Content-Type: application/json" \
         -d '{"version":"2.0.0","environment":"staging","dry_run":true}' \
-        "$BASE_URL/jobs/deploy")
+        "$BASE_URL/tasks/deploy")
 
     if echo "$RESP" | grep -q '"id"'; then
-        JOB_ID=$(echo "$RESP" | grep -o '"id":"[^"]*"' | cut -d'"' -f4)
-        pass "POST /jobs/deploy (dry_run) returns job ID: $JOB_ID"
+        TASK_ID=$(echo "$RESP" | grep -o '"id":"[^"]*"' | cut -d'"' -f4)
+        pass "POST /tasks/deploy (dry_run) returns task ID: $TASK_ID"
 
         # Wait and check result
         sleep 3
-        RESP=$(curl -s "$BASE_URL/jobs/$JOB_ID")
+        RESP=$(curl -s "$BASE_URL/tasks/$TASK_ID")
 
         if echo "$RESP" | grep -q '"status":"completed"'; then
-            pass "Deploy dry_run job completed successfully"
+            pass "Deploy dry_run task completed successfully"
         else
-            fail "Deploy dry_run job completed successfully" "completed" "$RESP"
+            fail "Deploy dry_run task completed successfully" "completed" "$RESP"
         fi
 
         # Check for dry_run status in result (stored as string)
@@ -414,29 +427,29 @@ test_deploy_job_dry_run() {
             fail "Deploy dry_run result data contains status=dry_run" 'dry_run' "$RESP"
         fi
     else
-        fail "POST /jobs/deploy (dry_run) returns job ID" '{"id":"..."}' "$RESP"
+        fail "POST /tasks/deploy (dry_run) returns task ID" '{"id":"..."}' "$RESP"
     fi
 }
 
-# Test: Job without result file (data field should be omitted)
-test_job_no_result_file() {
-    info "Testing job without AQSH_RESULT_FILE (slow hook)"
+# Test: Task without result file (data field should be omitted)
+test_task_no_result_file() {
+    info "Testing task without AQSH_RESULT_FILE (slow task)"
     RESP=$(curl -s -X POST -H "Content-Type: application/json" \
         -d '{}' \
-        "$BASE_URL/jobs/slow")
+        "$BASE_URL/tasks/slow")
 
     if echo "$RESP" | grep -q '"id"'; then
-        JOB_ID=$(echo "$RESP" | grep -o '"id":"[^"]*"' | cut -d'"' -f4)
-        pass "POST /jobs/slow returns job ID: $JOB_ID"
+        TASK_ID=$(echo "$RESP" | grep -o '"id":"[^"]*"' | cut -d'"' -f4)
+        pass "POST /tasks/slow returns task ID: $TASK_ID"
 
-        # Wait for job to complete
+        # Wait for task to complete
         sleep 7
-        RESP=$(curl -s "$BASE_URL/jobs/$JOB_ID")
+        RESP=$(curl -s "$BASE_URL/tasks/$TASK_ID")
 
         if echo "$RESP" | grep -q '"status":"completed"'; then
-            pass "Slow job completed successfully"
+            pass "Slow task completed successfully"
         else
-            fail "Slow job completed successfully" "completed" "$RESP"
+            fail "Slow task completed successfully" "completed" "$RESP"
         fi
 
         # Verify data field is NOT present (script didn't write to result file)
@@ -446,7 +459,7 @@ test_job_no_result_file() {
             pass "Result correctly omits data field (no result file written)"
         fi
     else
-        fail "POST /jobs/slow returns job ID" '{"id":"..."}' "$RESP"
+        fail "POST /tasks/slow returns task ID" '{"id":"..."}' "$RESP"
     fi
 }
 
@@ -459,39 +472,39 @@ echo "" >&2
 wait_for_server
 
 echo "" >&2
-echo "--- Health & Hooks Tests ---" >&2
+echo "--- Health & Tasks List Tests ---" >&2
 test_health
 test_metrics
-test_list_hooks
+test_list_tasks
 
 echo "" >&2
 echo "--- Validation Tests ---" >&2
-test_submit_unknown_hook
-test_submit_job_validation_error
-test_submit_job_invalid_pattern
-test_submit_job_invalid_enum
-test_submit_job_unknown_field
-test_get_job_not_found
+test_submit_unknown_task
+test_submit_task_validation_error
+test_submit_task_invalid_pattern
+test_submit_task_invalid_enum
+test_submit_task_unknown_field
+test_get_task_not_found
 
 echo "" >&2
-echo "--- Job Execution Tests ---" >&2
-SUCCESS_JOB_ID=$(test_submit_job_success)
+echo "--- Task Execution Tests ---" >&2
+SUCCESS_TASK_ID=$(test_submit_task_success)
 
-if [ -n "$SUCCESS_JOB_ID" ]; then
-    test_get_job_success "$SUCCESS_JOB_ID"
-    test_get_job_logs "$SUCCESS_JOB_ID"
+if [ -n "$SUCCESS_TASK_ID" ]; then
+    test_get_task_success "$SUCCESS_TASK_ID"
+    test_get_task_logs "$SUCCESS_TASK_ID"
 fi
 
-test_deploy_job
-test_deploy_job_dry_run
-test_job_no_result_file
+test_deploy_task
+test_deploy_task_dry_run
+test_task_no_result_file
 
 echo "" >&2
 echo "--- Log Streaming Tests ---" >&2
 test_realtime_log_streaming
 
 echo "" >&2
-echo "--- Metrics Tests (after jobs) ---" >&2
+echo "--- Metrics Tests (after tasks) ---" >&2
 test_metrics_after_jobs
 
 echo "" >&2

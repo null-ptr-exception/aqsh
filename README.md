@@ -91,10 +91,10 @@ Stateless HTTP server that handles:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/jobs/{hook}` | POST | Submit a job |
-| `/jobs/{id}` | GET | Get job status and result |
-| `/jobs/{id}/logs` | GET | Stream job logs (SSE) |
-| `/hooks` | GET | List available hooks with schemas |
+| `/tasks/{name}` | POST | Submit a task |
+| `/tasks/{id}` | GET | Get task status and result |
+| `/tasks/{id}/logs` | GET | Stream task logs (SSE) |
+| `/tasks` | GET | List available task types with schemas |
 | `/health` | GET | Health check |
 | `/metrics` | GET | Prometheus metrics |
 
@@ -125,11 +125,11 @@ Shared state for:
 
 ## API Reference
 
-### POST /jobs/{hook} - Submit Job
+### POST /tasks/{name} - Submit Task
 
 **Request:**
 ```http
-POST /jobs/deploy
+POST /tasks/deploy
 Content-Type: application/json
 
 {
@@ -142,7 +142,6 @@ Content-Type: application/json
 ```json
 {
   "id": "task_01HQXK5V7Z8Y9ABCDEF",
-  "hook": "deploy",
   "queue": "default",
   "status": "pending"
 }
@@ -152,27 +151,26 @@ Content-Type: application/json
 | Status | Reason |
 |--------|--------|
 | 400 | Validation error (missing field, invalid pattern, etc.) |
-| 404 | Unknown hook |
+| 404 | Unknown task |
 | 503 | Redis unavailable |
 
-### GET /jobs/{id} - Get Job Status
+### GET /tasks/{id} - Get Task Status
 
 **Response (200 OK):**
 ```json
 {
   "id": "task_01HQXK5V7Z8Y9ABCDEF",
-  "hook": "deploy",
   "queue": "default",
   "status": "completed",
-  "result": {
-    "exit_code": 0,
-    "data": "{\"status\":\"deployed\",\"version\":\"1.2.3\",\"environment\":\"prod\"}"
-  },
   "created_at": "2025-12-28T10:00:00Z",
   "started_at": "2025-12-28T10:00:01Z",
   "completed_at": "2025-12-28T10:00:15Z",
   "retried": 0,
-  "max_retry": 3
+  "max_retry": 3,
+  "result": {
+    "exit_code": 0,
+    "data": "{\"status\":\"deployed\",\"version\":\"1.2.3\",\"environment\":\"prod\"}"
+  }
 }
 ```
 
@@ -185,7 +183,7 @@ Content-Type: application/json
 | `failed` | Failed after all retries |
 | `retrying` | Failed, scheduled for retry |
 
-### GET /jobs/{id}/logs - Stream Logs
+### GET /tasks/{id}/logs - Stream Logs
 
 **Response (200 OK, SSE):**
 ```http
@@ -203,23 +201,22 @@ data: Deployment complete.
 ```
 
 **Behavior:**
-- For running jobs: streams logs in real-time
-- For completed jobs: streams stored logs
-- For pending jobs: waits for job to start, then streams
-- Connection closed when job completes or fails
+- For running tasks: streams logs in real-time
+- For completed tasks: streams stored logs
+- For pending tasks: waits for task to start, then streams
+- Connection closed when task completes or fails
 
 **Query Parameters:**
 | Param | Description | Default |
 |-------|-------------|---------|
-| `follow` | Keep connection open for running jobs | `true` |
-| `tail` | Number of lines from end (completed jobs) | all |
+| `follow` | Keep connection open for running tasks | `true` |
 
-### GET /hooks - List Hooks
+### GET /tasks - List Task Types
 
 **Response (200 OK):**
 ```json
 {
-  "hooks": {
+  "tasks": {
     "deploy": {
       "description": "Deploy application to environment",
       "timeout": "10m",
@@ -271,9 +268,9 @@ data: Deployment complete.
 
 ---
 
-## Hook Configuration
+## Task Configuration
 
-### hooks.yaml
+### tasks.yaml
 
 ```yaml
 defaults:
@@ -283,7 +280,7 @@ defaults:
   queue: default
   log_retention: 24h
 
-hooks:
+tasks:
   deploy:
     script: /tasks/deploy.sh
     description: "Deploy application to environment"
@@ -499,7 +496,7 @@ If client disconnects and reconnects:
 |----------|-------------|---------|
 | `AQSH_MODE` | `api`, `worker`, or `both` | `both` |
 | `AQSH_BIND` | API listen address | `0.0.0.0:8080` |
-| `AQSH_HOOKS_CONFIG` | Path to hooks.yaml | `/etc/aqsh/hooks.yaml` |
+| `AQSH_TASKS_CONFIG` | Path to tasks.yaml | `/etc/aqsh/tasks.yaml` |
 | `AQSH_TASKS_DIR` | Tasks directory | `/tasks` |
 | `AQSH_RESULTS_DIR` | Directory for temp result files | `/var/lib/aqsh/results` |
 | `AQSH_REDIS_ADDR` | Redis address (standalone) | `localhost:6379` |
@@ -565,18 +562,18 @@ If client disconnects and reconnects:
 ### Example Manifests
 
 ```yaml
-# ConfigMap for hooks
+# ConfigMap for task definitions
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: aqsh-hooks
+  name: aqsh-tasks-config
   namespace: aqsh
 data:
-  hooks.yaml: |
+  tasks.yaml: |
     defaults:
       timeout: 5m
       max_retry: 3
-    hooks:
+    tasks:
       deploy:
         script: /tasks/deploy.sh
         input:
@@ -584,7 +581,7 @@ data:
             env: VERSION
             required: true
 ---
-# ConfigMap for tasks
+# ConfigMap for task scripts
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -624,7 +621,7 @@ spec:
         - name: AQSH_REDIS_SENTINEL_MASTER
           value: "mymaster"
         volumeMounts:
-        - name: hooks
+        - name: tasks-config
           mountPath: /etc/aqsh
         livenessProbe:
           httpGet:
@@ -635,9 +632,9 @@ spec:
             path: /health
             port: 8080
       volumes:
-      - name: hooks
+      - name: tasks-config
         configMap:
-          name: aqsh-hooks
+          name: aqsh-tasks-config
 ---
 # Worker Deployment
 apiVersion: apps/v1
@@ -667,15 +664,15 @@ spec:
         - name: AQSH_WORKER_CONCURRENCY
           value: "10"
         volumeMounts:
-        - name: hooks
+        - name: tasks-config
           mountPath: /etc/aqsh
-        - name: tasks
+        - name: task-scripts
           mountPath: /tasks
       volumes:
-      - name: hooks
+      - name: tasks-config
         configMap:
-          name: aqsh-hooks
-      - name: tasks
+          name: aqsh-tasks-config
+      - name: task-scripts
         configMap:
           name: aqsh-tasks
           defaultMode: 0755
@@ -805,7 +802,7 @@ aqsh is a complete rewrite with different storage backend. Migration options:
 
 Since aqsh uses Redis instead of MySQL/etcd, there's no data migration path. Jobs in DJQWSC queue should complete before switching.
 
-### Hook Configuration Migration
+### Task Configuration Migration
 
 DJQWSC (webhook `hooks.yaml`):
 ```yaml
@@ -820,9 +817,9 @@ DJQWSC (webhook `hooks.yaml`):
       envname: VERSION
 ```
 
-aqsh (`hooks.yaml`):
+aqsh (`tasks.yaml`):
 ```yaml
-hooks:
+tasks:
   deploy:
     script: /tasks/deploy.sh
     input:

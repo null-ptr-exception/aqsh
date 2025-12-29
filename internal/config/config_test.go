@@ -11,7 +11,7 @@ func TestLoad(t *testing.T) {
 	envVars := []string{
 		"AQSH_MODE",
 		"AQSH_BIND",
-		"AQSH_HOOKS_CONFIG",
+		"AQSH_TASKS_CONFIG",
 		"AQSH_TASKS_DIR",
 		"AQSH_WORKER_CONCURRENCY",
 		"AQSH_WORKER_QUEUES",
@@ -36,8 +36,8 @@ func TestLoad(t *testing.T) {
 		if cfg.Bind != "0.0.0.0:8080" {
 			t.Errorf("expected Bind '0.0.0.0:8080', got %q", cfg.Bind)
 		}
-		if cfg.HooksConfig != "/etc/aqsh/hooks.yaml" {
-			t.Errorf("expected HooksConfig '/etc/aqsh/hooks.yaml', got %q", cfg.HooksConfig)
+		if cfg.TasksConfig != "/etc/aqsh/tasks.yaml" {
+			t.Errorf("expected TasksConfig '/etc/aqsh/tasks.yaml', got %q", cfg.TasksConfig)
 		}
 		if cfg.TasksDir != "/tasks" {
 			t.Errorf("expected TasksDir '/tasks', got %q", cfg.TasksDir)
