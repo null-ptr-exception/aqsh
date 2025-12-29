@@ -12,22 +12,29 @@ build:
   - image: aqsh
     docker:
       dockerfile: Dockerfile
+  - image: aqsh-test
+    docker:
+      dockerfile: Dockerfile.test
 
 deploy:
   kubectl: {}
+
+verify:
+- name: integration-test
+  container:
+    name: integration-test
+    image: aqsh-test
+    env:
+    - name: AQSH_URL
+      value: http://aqsh.aqsh.svc.cluster.local:8080
+  executionMode:
+    kubernetesCluster: {}
 
 manifests:
   rawYaml:
   - k8s/namespace.yaml
   - k8s/redis.yaml
   - k8s/aqsh.yaml
-
-portForward:
-- resourceType: service
-  resourceName: aqsh
-  namespace: aqsh
-  port: 8080
-  localPort: 8080
 
 profiles:
 - name: remote

@@ -1,0 +1,11 @@
+FROM alpine:3.20
+
+RUN apk add --no-cache bash curl
+
+COPY test/integration_test.sh /test/integration_test.sh
+RUN chmod +x /test/integration_test.sh
+
+# Default URL for k8s in-cluster access
+ENV AQSH_URL=http://aqsh:8080
+
+CMD ["/test/integration_test.sh"]
