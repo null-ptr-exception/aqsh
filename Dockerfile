@@ -22,11 +22,13 @@ RUN if [ "$DEBUG" = "true" ]; then \
     fi
 
 # Runtime stage
-FROM alpine:3.20
+FROM debian:bookworm-slim
 
 ARG DEBUG=false
 
-RUN apk add --no-cache bash ca-certificates tzdata
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash ca-certificates tzdata wget \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
