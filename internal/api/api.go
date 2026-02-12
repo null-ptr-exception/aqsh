@@ -99,6 +99,15 @@ func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Group authorization
+	groups := r.Header.Get(s.cfg.GroupsHeader)
+	if len(taskDef.AllowedGroups) > 0 {
+		if !hasAnyGroup(splitGroups(groups), taskDef.AllowedGroups) {
+			s.jsonError(w, http.StatusForbidden, "not authorized for this task")
+			return
+		}
+	}
+
 	var payload map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		s.jsonError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
@@ -115,6 +124,7 @@ func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 		Name:      taskName,
 		CreatedAt: time.Now(),
 		Identity:  identity,
+		Groups:    groups,
 		Env:       env,
 		Payload:   payload,
 	}
@@ -184,6 +194,9 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 		}
 		if payload.Identity != "" {
 			resp["identity"] = payload.Identity
+		}
+		if payload.Groups != "" {
+			resp["groups"] = payload.Groups
 		}
 	}
 
@@ -300,13 +313,17 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 			inputs = append(inputs, m)
 		}
 
-		result[name] = map[string]any{
+		taskInfo := map[string]any{
 			"description": taskDef.Description,
 			"timeout":     taskDef.Timeout.String(),
 			"max_retry":   taskDef.MaxRetry,
 			"queue":       taskDef.Queue,
 			"input":       inputs,
 		}
+		if len(taskDef.AllowedGroups) > 0 {
+			taskInfo["allowed_groups"] = taskDef.AllowedGroups
+		}
+		result[name] = taskInfo
 	}
 
 	s.jsonResponse(w, http.StatusOK, map[string]any{"tasks": result})
@@ -354,6 +371,31 @@ func (s *Server) jsonResponse(w http.ResponseWriter, status int, data any) {
 
 func (s *Server) jsonError(w http.ResponseWriter, status int, message string) {
 	s.jsonResponse(w, status, map[string]string{"error": message})
+}
+
+func splitGroups(header string) []string {
+	if header == "" {
+		return nil
+	}
+	parts := strings.Split(header, ",")
+	groups := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if g := strings.TrimSpace(p); g != "" {
+			groups = append(groups, g)
+		}
+	}
+	return groups
+}
+
+func hasAnyGroup(userGroups, allowedGroups []string) bool {
+	for _, ug := range userGroups {
+		for _, ag := range allowedGroups {
+			if ug == ag {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func stateToStatus(state asynq.TaskState) string {

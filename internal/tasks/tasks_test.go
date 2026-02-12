@@ -312,6 +312,36 @@ func TestTasksConfigResolve(t *testing.T) {
 			t.Error("expected error for unknown task")
 		}
 	})
+
+	t.Run("resolve allowed_groups", func(t *testing.T) {
+		cfgWithGroups := &TasksConfig{
+			Tasks: map[string]TaskDef{
+				"restricted": {
+					Script:        "restricted.sh",
+					AllowedGroups: []string{"admin", "ops"},
+				},
+				"open": {
+					Script: "open.sh",
+				},
+			},
+		}
+
+		resolved, err := cfgWithGroups.Resolve("restricted")
+		if err != nil {
+			t.Fatalf("Resolve() error = %v", err)
+		}
+		if len(resolved.AllowedGroups) != 2 || resolved.AllowedGroups[0] != "admin" || resolved.AllowedGroups[1] != "ops" {
+			t.Errorf("expected AllowedGroups [admin, ops], got %v", resolved.AllowedGroups)
+		}
+
+		resolved, err = cfgWithGroups.Resolve("open")
+		if err != nil {
+			t.Fatalf("Resolve() error = %v", err)
+		}
+		if len(resolved.AllowedGroups) != 0 {
+			t.Errorf("expected empty AllowedGroups, got %v", resolved.AllowedGroups)
+		}
+	})
 }
 
 func TestValidatePayload(t *testing.T) {

@@ -125,6 +125,54 @@ func TestTaskPayloadAndResult(t *testing.T) {
 			t.Error("expected identity field to be omitted when empty")
 		}
 	})
+
+	t.Run("TaskPayload with groups", func(t *testing.T) {
+		payload := TaskPayload{
+			Name:      "deploy",
+			CreatedAt: time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),
+			Identity:  "alice@example.com",
+			Groups:    "admin,ops",
+			Env:       map[string]string{},
+			Payload:   map[string]any{},
+		}
+
+		bytes, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("failed to marshal: %v", err)
+		}
+
+		var decoded TaskPayload
+		if err := json.Unmarshal(bytes, &decoded); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+
+		if decoded.Groups != "admin,ops" {
+			t.Errorf("expected groups='admin,ops', got %q", decoded.Groups)
+		}
+	})
+
+	t.Run("TaskPayload groups omitted when empty", func(t *testing.T) {
+		payload := TaskPayload{
+			Name:      "deploy",
+			CreatedAt: time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),
+			Env:       map[string]string{},
+			Payload:   map[string]any{},
+		}
+
+		bytes, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("failed to marshal: %v", err)
+		}
+
+		var raw map[string]any
+		if err := json.Unmarshal(bytes, &raw); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+
+		if _, exists := raw["groups"]; exists {
+			t.Error("expected groups field to be omitted when empty")
+		}
+	})
 }
 
 func TestReadResultFile(t *testing.T) {

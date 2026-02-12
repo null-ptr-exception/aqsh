@@ -27,6 +27,7 @@ type TaskPayload struct {
 	Name      string            `json:"name"`
 	CreatedAt time.Time         `json:"created_at"`
 	Identity  string            `json:"identity,omitempty"`
+	Groups    string            `json:"groups,omitempty"`
 	Env       map[string]string `json:"env"`
 	Payload   map[string]any    `json:"payload"`
 }
@@ -103,7 +104,7 @@ func (w *Worker) handleTask(ctx context.Context, task *asynq.Task) error {
 		return fmt.Errorf("resolve task: %w", err)
 	}
 
-	result, err := w.executeScript(ctx, task.ResultWriter(), taskID, taskDef, payload.Env, payload.Identity)
+	result, err := w.executeScript(ctx, task.ResultWriter(), taskID, taskDef, payload.Env, payload.Identity, payload.Groups)
 	if err != nil {
 		return err
 	}
@@ -120,7 +121,7 @@ func (w *Worker) handleTask(ctx context.Context, task *asynq.Task) error {
 	return nil
 }
 
-func (w *Worker) executeScript(ctx context.Context, resultWriter io.Writer, taskID string, taskDef *tasks.ResolvedTask, env map[string]string, identity string) (*TaskResult, error) {
+func (w *Worker) executeScript(ctx context.Context, resultWriter io.Writer, taskID string, taskDef *tasks.ResolvedTask, env map[string]string, identity string, groups string) (*TaskResult, error) {
 	scriptPath := taskDef.Script
 	// If script is relative and doesn't contain a path separator, prepend ./
 	// This ensures exec finds it in the working directory
@@ -148,6 +149,9 @@ func (w *Worker) executeScript(ctx context.Context, resultWriter io.Writer, task
 	cmd.Env = append(cmd.Env, "AQSH_RESULT_FILE="+resultFilePath)
 	if identity != "" {
 		cmd.Env = append(cmd.Env, "AQSH_IDENTITY="+identity)
+	}
+	if groups != "" {
+		cmd.Env = append(cmd.Env, "AQSH_GROUPS="+groups)
 	}
 
 	stdout, err := cmd.StdoutPipe()

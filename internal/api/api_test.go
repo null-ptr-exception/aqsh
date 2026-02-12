@@ -610,6 +610,150 @@ func TestHandleGetTaskNoIdentity(t *testing.T) {
 	}
 }
 
+func TestHandleSubmitTaskGroupAuthorization(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	tasksConfig := &tasks.TasksConfig{
+		Tasks: map[string]tasks.TaskDef{
+			"restricted": {
+				Script:        "restricted.sh",
+				AllowedGroups: []string{"admin", "ops"},
+			},
+			"open": {
+				Script: "open.sh",
+			},
+		},
+	}
+
+	s := &Server{
+		cfg: &config.Config{
+			IdentityHeader: "X-Forwarded-User",
+			GroupsHeader:   "X-Forwarded-Groups",
+		},
+		tasks:     tasksConfig,
+		rdb:       rdb,
+		logStream: logs.NewLogStreamer(rdb, time.Hour),
+		client:    asynq.NewClient(asynq.RedisClientOpt{Addr: mr.Addr()}),
+	}
+
+	t.Run("allowed group passes", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/tasks/restricted", strings.NewReader(`{}`))
+		req.SetPathValue("name", "restricted")
+		req.Header.Set("X-Forwarded-Groups", "dev,ops")
+		rec := httptest.NewRecorder()
+
+		s.handleSubmitTask(rec, req)
+
+		if rec.Code != http.StatusAccepted {
+			t.Errorf("expected status %d, got %d: %s", http.StatusAccepted, rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("no matching group returns 403", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/tasks/restricted", strings.NewReader(`{}`))
+		req.SetPathValue("name", "restricted")
+		req.Header.Set("X-Forwarded-Groups", "dev,staging")
+		rec := httptest.NewRecorder()
+
+		s.handleSubmitTask(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("expected status %d, got %d", http.StatusForbidden, rec.Code)
+		}
+	})
+
+	t.Run("no groups header returns 403 for restricted task", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/tasks/restricted", strings.NewReader(`{}`))
+		req.SetPathValue("name", "restricted")
+		rec := httptest.NewRecorder()
+
+		s.handleSubmitTask(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("expected status %d, got %d", http.StatusForbidden, rec.Code)
+		}
+	})
+
+	t.Run("open task allows anyone", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/tasks/open", strings.NewReader(`{}`))
+		req.SetPathValue("name", "open")
+		rec := httptest.NewRecorder()
+
+		s.handleSubmitTask(rec, req)
+
+		if rec.Code == http.StatusForbidden {
+			t.Error("expected open task to allow anyone")
+		}
+	})
+
+	t.Run("groups with spaces trimmed", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/tasks/restricted", strings.NewReader(`{}`))
+		req.SetPathValue("name", "restricted")
+		req.Header.Set("X-Forwarded-Groups", " admin , dev ")
+		rec := httptest.NewRecorder()
+
+		s.handleSubmitTask(rec, req)
+
+		if rec.Code != http.StatusAccepted {
+			t.Errorf("expected status %d, got %d: %s", http.StatusAccepted, rec.Code, rec.Body.String())
+		}
+	})
+}
+
+func TestSplitGroups(t *testing.T) {
+	tests := []struct {
+		name     string
+		header   string
+		expected []string
+	}{
+		{"empty", "", nil},
+		{"single", "admin", []string{"admin"}},
+		{"multiple", "admin,ops,dev", []string{"admin", "ops", "dev"}},
+		{"with spaces", " admin , ops ", []string{"admin", "ops"}},
+		{"trailing comma", "admin,", []string{"admin"}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := splitGroups(tc.header)
+			if len(got) != len(tc.expected) {
+				t.Fatalf("expected %d groups, got %d: %v", len(tc.expected), len(got), got)
+			}
+			for i := range got {
+				if got[i] != tc.expected[i] {
+					t.Errorf("group[%d] = %q, want %q", i, got[i], tc.expected[i])
+				}
+			}
+		})
+	}
+}
+
+func TestHasAnyGroup(t *testing.T) {
+	tests := []struct {
+		name     string
+		user     []string
+		allowed  []string
+		expected bool
+	}{
+		{"match", []string{"dev", "ops"}, []string{"admin", "ops"}, true},
+		{"no match", []string{"dev", "staging"}, []string{"admin", "ops"}, false},
+		{"empty user", nil, []string{"admin"}, false},
+		{"empty allowed", []string{"admin"}, nil, false},
+		{"both empty", nil, nil, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := hasAnyGroup(tc.user, tc.allowed)
+			if got != tc.expected {
+				t.Errorf("hasAnyGroup(%v, %v) = %v, want %v", tc.user, tc.allowed, got, tc.expected)
+			}
+		})
+	}
+}
+
 func TestHandleGetLogs(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})

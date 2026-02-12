@@ -19,6 +19,7 @@ type Config struct {
 	ResultRetention   time.Duration
 	IdentityHeader    string
 	RequireIdentity   bool
+	GroupsHeader      string
 	Redis             RedisConfig
 }
 
@@ -47,6 +48,7 @@ func Load() *Config {
 		ResultRetention:   getEnvDuration("AQSH_RESULT_RETENTION", 72*time.Hour),
 		IdentityHeader:    getEnv("AQSH_IDENTITY_HEADER", "X-Forwarded-User"),
 		RequireIdentity:   getEnvBool("AQSH_REQUIRE_IDENTITY", false),
+		GroupsHeader:      getEnv("AQSH_GROUPS_HEADER", "X-Forwarded-Groups"),
 		Redis: RedisConfig{
 			Addr:           getEnv("AQSH_REDIS_ADDR", "localhost:6379"),
 			Password:       getEnv("AQSH_REDIS_PASSWORD", ""),

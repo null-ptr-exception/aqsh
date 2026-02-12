@@ -24,6 +24,7 @@ func TestLoad(t *testing.T) {
 		"AQSH_REDIS_SENTINEL_MASTER",
 		"AQSH_IDENTITY_HEADER",
 		"AQSH_REQUIRE_IDENTITY",
+		"AQSH_GROUPS_HEADER",
 	}
 	for _, v := range envVars {
 		os.Unsetenv(v)
@@ -61,6 +62,9 @@ func TestLoad(t *testing.T) {
 		}
 		if cfg.RequireIdentity {
 			t.Error("expected RequireIdentity to be false by default")
+		}
+		if cfg.GroupsHeader != "X-Forwarded-Groups" {
+			t.Errorf("expected GroupsHeader 'X-Forwarded-Groups', got %q", cfg.GroupsHeader)
 		}
 		if cfg.Redis.Addr != "localhost:6379" {
 			t.Errorf("expected Redis.Addr 'localhost:6379', got %q", cfg.Redis.Addr)

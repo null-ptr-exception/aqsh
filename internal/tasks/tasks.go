@@ -24,13 +24,14 @@ type TaskDefaults struct {
 }
 
 type TaskDef struct {
-	Script      string  `yaml:"script"`
-	Description string  `yaml:"description"`
-	Timeout     string  `yaml:"timeout"`
-	MaxRetry    *int    `yaml:"max_retry"`
-	RetryDelay  string  `yaml:"retry_delay"`
-	Queue       string  `yaml:"queue"`
-	Input       []Input `yaml:"input"`
+	Script        string   `yaml:"script"`
+	Description   string   `yaml:"description"`
+	Timeout       string   `yaml:"timeout"`
+	MaxRetry      *int     `yaml:"max_retry"`
+	RetryDelay    string   `yaml:"retry_delay"`
+	Queue         string   `yaml:"queue"`
+	AllowedGroups []string `yaml:"allowed_groups"`
+	Input         []Input  `yaml:"input"`
 }
 
 type Input struct {
@@ -152,14 +153,15 @@ func (i *Input) GetEnvValue(value any) string {
 }
 
 type ResolvedTask struct {
-	Name        string
-	Script      string
-	Description string
-	Timeout     time.Duration
-	MaxRetry    int
-	RetryDelay  time.Duration
-	Queue       string
-	Input       []Input
+	Name          string
+	Script        string
+	Description   string
+	Timeout       time.Duration
+	MaxRetry      int
+	RetryDelay    time.Duration
+	Queue         string
+	AllowedGroups []string
+	Input         []Input
 }
 
 func Load(path string) (*TasksConfig, error) {
@@ -220,14 +222,15 @@ func (c *TasksConfig) Resolve(name string) (*ResolvedTask, error) {
 	}
 
 	return &ResolvedTask{
-		Name:        name,
-		Script:      task.Script,
-		Description: task.Description,
-		Timeout:     timeoutDur,
-		MaxRetry:    maxRetry,
-		RetryDelay:  retryDelayDur,
-		Queue:       queue,
-		Input:       task.Input,
+		Name:          name,
+		Script:        task.Script,
+		Description:   task.Description,
+		Timeout:       timeoutDur,
+		MaxRetry:      maxRetry,
+		RetryDelay:    retryDelayDur,
+		Queue:         queue,
+		AllowedGroups: task.AllowedGroups,
+		Input:         task.Input,
 	}, nil
 }
 
