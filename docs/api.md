@@ -6,12 +6,17 @@
 ```http
 POST /tasks/deploy
 Content-Type: application/json
+X-Forwarded-User: alice@example.com
 
 {
   "version": "1.2.3",
   "environment": "prod"
 }
 ```
+
+**Identity Header:**
+
+The identity header (default `X-Forwarded-User`, configurable via `AQSH_IDENTITY_HEADER`) identifies who submitted the task. When `AQSH_REQUIRE_IDENTITY=true`, requests without this header are rejected with 401.
 
 **Response (202 Accepted):**
 ```json
@@ -25,6 +30,7 @@ Content-Type: application/json
 **Errors:**
 | Status | Reason |
 |--------|--------|
+| 401 | Missing identity header (when `AQSH_REQUIRE_IDENTITY=true`) |
 | 400 | Validation error (missing field, invalid pattern, etc.) |
 | 404 | Unknown task |
 | 503 | Redis unavailable |
@@ -37,6 +43,7 @@ Content-Type: application/json
   "id": "task_01HQXK5V7Z8Y9ABCDEF",
   "queue": "default",
   "status": "completed",
+  "identity": "alice@example.com",
   "created_at": "2025-12-28T10:00:00Z",
   "started_at": "2025-12-28T10:00:01Z",
   "completed_at": "2025-12-28T10:00:15Z",

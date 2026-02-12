@@ -22,6 +22,8 @@ func TestLoad(t *testing.T) {
 		"AQSH_REDIS_DB",
 		"AQSH_REDIS_SENTINEL_ADDRS",
 		"AQSH_REDIS_SENTINEL_MASTER",
+		"AQSH_IDENTITY_HEADER",
+		"AQSH_REQUIRE_IDENTITY",
 	}
 	for _, v := range envVars {
 		os.Unsetenv(v)
@@ -53,6 +55,12 @@ func TestLoad(t *testing.T) {
 		}
 		if cfg.ResultRetention != 72*time.Hour {
 			t.Errorf("expected ResultRetention 72h, got %v", cfg.ResultRetention)
+		}
+		if cfg.IdentityHeader != "X-Forwarded-User" {
+			t.Errorf("expected IdentityHeader 'X-Forwarded-User', got %q", cfg.IdentityHeader)
+		}
+		if cfg.RequireIdentity {
+			t.Error("expected RequireIdentity to be false by default")
 		}
 		if cfg.Redis.Addr != "localhost:6379" {
 			t.Errorf("expected Redis.Addr 'localhost:6379', got %q", cfg.Redis.Addr)
@@ -143,6 +151,64 @@ func TestGetEnvInt(t *testing.T) {
 		got := getEnvInt("TEST_INT", 42)
 		if got != 42 {
 			t.Errorf("expected default 42, got %d", got)
+		}
+	})
+}
+
+func TestGetEnvBool(t *testing.T) {
+	os.Unsetenv("TEST_BOOL")
+
+	t.Run("default false", func(t *testing.T) {
+		got := getEnvBool("TEST_BOOL", false)
+		if got {
+			t.Error("expected false, got true")
+		}
+	})
+
+	t.Run("default true", func(t *testing.T) {
+		got := getEnvBool("TEST_BOOL", true)
+		if !got {
+			t.Error("expected true, got false")
+		}
+	})
+
+	t.Run("true", func(t *testing.T) {
+		os.Setenv("TEST_BOOL", "true")
+		defer os.Unsetenv("TEST_BOOL")
+
+		got := getEnvBool("TEST_BOOL", false)
+		if !got {
+			t.Error("expected true, got false")
+		}
+	})
+
+	t.Run("1", func(t *testing.T) {
+		os.Setenv("TEST_BOOL", "1")
+		defer os.Unsetenv("TEST_BOOL")
+
+		got := getEnvBool("TEST_BOOL", false)
+		if !got {
+			t.Error("expected true, got false")
+		}
+	})
+
+	t.Run("false", func(t *testing.T) {
+		os.Setenv("TEST_BOOL", "false")
+		defer os.Unsetenv("TEST_BOOL")
+
+		got := getEnvBool("TEST_BOOL", true)
+		if got {
+			t.Error("expected false, got true")
+		}
+	})
+
+	t.Run("other value", func(t *testing.T) {
+		os.Setenv("TEST_BOOL", "yes")
+		defer os.Unsetenv("TEST_BOOL")
+
+		got := getEnvBool("TEST_BOOL", true)
+		if got {
+			t.Error("expected false for non-true/1 value, got true")
 		}
 	})
 }

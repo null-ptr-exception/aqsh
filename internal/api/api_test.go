@@ -409,6 +409,207 @@ func TestJsonError(t *testing.T) {
 	}
 }
 
+func TestHandleSubmitTaskIdentityRequired(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	tasksConfig := &tasks.TasksConfig{
+		Tasks: map[string]tasks.TaskDef{
+			"test": {Script: "test.sh"},
+		},
+	}
+
+	s := &Server{
+		cfg: &config.Config{
+			IdentityHeader:  "X-Forwarded-User",
+			RequireIdentity: true,
+		},
+		tasks:     tasksConfig,
+		rdb:       rdb,
+		logStream: logs.NewLogStreamer(rdb, time.Hour),
+		client:    asynq.NewClient(asynq.RedisClientOpt{Addr: mr.Addr()}),
+	}
+
+	t.Run("missing identity returns 401", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/tasks/test", strings.NewReader(`{}`))
+		req.SetPathValue("name", "test")
+		rec := httptest.NewRecorder()
+
+		s.handleSubmitTask(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("expected status %d, got %d", http.StatusUnauthorized, rec.Code)
+		}
+
+		var resp map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+		if _, ok := resp["error"]; !ok {
+			t.Error("expected error in response")
+		}
+	})
+
+	t.Run("with identity header proceeds", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/tasks/test", strings.NewReader(`{}`))
+		req.SetPathValue("name", "test")
+		req.Header.Set("X-Forwarded-User", "alice@example.com")
+		rec := httptest.NewRecorder()
+
+		s.handleSubmitTask(rec, req)
+
+		// Should not be 401 — it will fail later (no asynq client) but that's fine
+		if rec.Code == http.StatusUnauthorized {
+			t.Error("expected request to pass identity check")
+		}
+	})
+}
+
+func TestHandleSubmitTaskIdentityOptional(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	tasksConfig := &tasks.TasksConfig{
+		Tasks: map[string]tasks.TaskDef{
+			"test": {Script: "test.sh"},
+		},
+	}
+
+	s := &Server{
+		cfg: &config.Config{
+			IdentityHeader:  "X-Forwarded-User",
+			RequireIdentity: false,
+		},
+		tasks:     tasksConfig,
+		rdb:       rdb,
+		logStream: logs.NewLogStreamer(rdb, time.Hour),
+		client:    asynq.NewClient(asynq.RedisClientOpt{Addr: mr.Addr()}),
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/test", strings.NewReader(`{}`))
+	req.SetPathValue("name", "test")
+	rec := httptest.NewRecorder()
+
+	s.handleSubmitTask(rec, req)
+
+	// Should not be 401 — anonymous allowed
+	if rec.Code == http.StatusUnauthorized {
+		t.Error("expected anonymous request to be allowed when RequireIdentity is false")
+	}
+}
+
+func TestHandleGetTaskIdentity(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	cfg := &config.Config{
+		WorkerQueues: []string{"default"},
+	}
+
+	s := &Server{
+		cfg:       cfg,
+		rdb:       rdb,
+		inspector: asynq.NewInspector(asynq.RedisClientOpt{Addr: mr.Addr()}),
+	}
+
+	// Enqueue a task with identity to test GET response
+	client := asynq.NewClient(asynq.RedisClientOpt{Addr: mr.Addr()})
+	defer client.Close()
+
+	payload := map[string]any{
+		"name":       "test",
+		"created_at": time.Now().Format(time.RFC3339),
+		"identity":   "alice@example.com",
+		"env":        map[string]string{},
+		"payload":    map[string]any{},
+	}
+	payloadBytes, _ := json.Marshal(payload)
+	task := asynq.NewTask("aqsh:job", payloadBytes,
+		asynq.Queue("default"),
+		asynq.Retention(time.Hour),
+	)
+	info, err := client.Enqueue(task)
+	if err != nil {
+		t.Fatalf("failed to enqueue task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks/"+info.ID, nil)
+	req.SetPathValue("id", info.ID)
+	rec := httptest.NewRecorder()
+
+	s.handleGetTask(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+
+	if resp["identity"] != "alice@example.com" {
+		t.Errorf("expected identity='alice@example.com', got %v", resp["identity"])
+	}
+}
+
+func TestHandleGetTaskNoIdentity(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	cfg := &config.Config{
+		WorkerQueues: []string{"default"},
+	}
+
+	s := &Server{
+		cfg:       cfg,
+		rdb:       rdb,
+		inspector: asynq.NewInspector(asynq.RedisClientOpt{Addr: mr.Addr()}),
+	}
+
+	client := asynq.NewClient(asynq.RedisClientOpt{Addr: mr.Addr()})
+	defer client.Close()
+
+	payload := map[string]any{
+		"name":       "test",
+		"created_at": time.Now().Format(time.RFC3339),
+		"env":        map[string]string{},
+		"payload":    map[string]any{},
+	}
+	payloadBytes, _ := json.Marshal(payload)
+	task := asynq.NewTask("aqsh:job", payloadBytes,
+		asynq.Queue("default"),
+		asynq.Retention(time.Hour),
+	)
+	info, err := client.Enqueue(task)
+	if err != nil {
+		t.Fatalf("failed to enqueue task: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks/"+info.ID, nil)
+	req.SetPathValue("id", info.ID)
+	rec := httptest.NewRecorder()
+
+	s.handleGetTask(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+
+	if _, ok := resp["identity"]; ok {
+		t.Errorf("expected identity to be omitted when not set, got %v", resp["identity"])
+	}
+}
+
 func TestHandleGetLogs(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})

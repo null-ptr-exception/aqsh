@@ -78,6 +78,53 @@ func TestTaskPayloadAndResult(t *testing.T) {
 			t.Errorf("expected env DEPLOY_ENV='production', got %q", decoded.Env["DEPLOY_ENV"])
 		}
 	})
+
+	t.Run("TaskPayload with identity", func(t *testing.T) {
+		payload := TaskPayload{
+			Name:      "deploy",
+			CreatedAt: time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),
+			Identity:  "alice@example.com",
+			Env:       map[string]string{"DEPLOY_ENV": "production"},
+			Payload:   map[string]any{},
+		}
+
+		bytes, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("failed to marshal: %v", err)
+		}
+
+		var decoded TaskPayload
+		if err := json.Unmarshal(bytes, &decoded); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+
+		if decoded.Identity != "alice@example.com" {
+			t.Errorf("expected identity='alice@example.com', got %q", decoded.Identity)
+		}
+	})
+
+	t.Run("TaskPayload identity omitted when empty", func(t *testing.T) {
+		payload := TaskPayload{
+			Name:      "deploy",
+			CreatedAt: time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),
+			Env:       map[string]string{},
+			Payload:   map[string]any{},
+		}
+
+		bytes, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("failed to marshal: %v", err)
+		}
+
+		var raw map[string]any
+		if err := json.Unmarshal(bytes, &raw); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+
+		if _, exists := raw["identity"]; exists {
+			t.Error("expected identity field to be omitted when empty")
+		}
+	})
 }
 
 func TestReadResultFile(t *testing.T) {

@@ -87,6 +87,12 @@ func (s *Server) Run(ctx context.Context) error {
 func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 	taskName := r.PathValue("name")
 
+	identity := r.Header.Get(s.cfg.IdentityHeader)
+	if s.cfg.RequireIdentity && identity == "" {
+		s.jsonError(w, http.StatusUnauthorized, "identity header required")
+		return
+	}
+
 	taskDef, err := s.tasks.Resolve(taskName)
 	if err != nil {
 		s.jsonError(w, http.StatusNotFound, err.Error())
@@ -108,6 +114,7 @@ func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 	taskPayload := worker.TaskPayload{
 		Name:      taskName,
 		CreatedAt: time.Now(),
+		Identity:  identity,
 		Env:       env,
 		Payload:   payload,
 	}
@@ -169,10 +176,15 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 		"max_retry": info.MaxRetry,
 	}
 
-	// Get created_at from task payload
+	// Get created_at and identity from task payload
 	var payload worker.TaskPayload
-	if err := json.Unmarshal(info.Payload, &payload); err == nil && !payload.CreatedAt.IsZero() {
-		resp["created_at"] = payload.CreatedAt.Format(time.RFC3339)
+	if err := json.Unmarshal(info.Payload, &payload); err == nil {
+		if !payload.CreatedAt.IsZero() {
+			resp["created_at"] = payload.CreatedAt.Format(time.RFC3339)
+		}
+		if payload.Identity != "" {
+			resp["identity"] = payload.Identity
+		}
 	}
 
 	// Get started_at from Redis metadata

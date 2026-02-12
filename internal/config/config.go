@@ -17,6 +17,8 @@ type Config struct {
 	WorkerQueues      []string
 	LogRetention      time.Duration
 	ResultRetention   time.Duration
+	IdentityHeader    string
+	RequireIdentity   bool
 	Redis             RedisConfig
 }
 
@@ -43,6 +45,8 @@ func Load() *Config {
 		WorkerQueues:      getEnvList("AQSH_WORKER_QUEUES", []string{"default"}),
 		LogRetention:      getEnvDuration("AQSH_LOG_RETENTION", 24*time.Hour),
 		ResultRetention:   getEnvDuration("AQSH_RESULT_RETENTION", 72*time.Hour),
+		IdentityHeader:    getEnv("AQSH_IDENTITY_HEADER", "X-Forwarded-User"),
+		RequireIdentity:   getEnvBool("AQSH_REQUIRE_IDENTITY", false),
 		Redis: RedisConfig{
 			Addr:           getEnv("AQSH_REDIS_ADDR", "localhost:6379"),
 			Password:       getEnv("AQSH_REDIS_PASSWORD", ""),
@@ -72,6 +76,13 @@ func getEnvInt(key string, defaultVal int) int {
 func getEnvList(key string, defaultVal []string) []string {
 	if v := os.Getenv(key); v != "" {
 		return strings.Split(v, ",")
+	}
+	return defaultVal
+}
+
+func getEnvBool(key string, defaultVal bool) bool {
+	if v := os.Getenv(key); v != "" {
+		return v == "true" || v == "1"
 	}
 	return defaultVal
 }

@@ -361,6 +361,8 @@ If client disconnects and reconnects:
 | `AQSH_REDIS_PASSWORD` | Redis password | - |
 | `AQSH_WORKER_CONCURRENCY` | Concurrent tasks per worker | `10` |
 | `AQSH_WORKER_QUEUES` | Queues to process (comma-separated) | `default` |
+| `AQSH_IDENTITY_HEADER` | Header name for user identity | `X-Forwarded-User` |
+| `AQSH_REQUIRE_IDENTITY` | Require identity header (401 if missing) | `false` |
 | `AQSH_LOG_RETENTION` | Log stream retention | `24h` |
 | `AQSH_RESULT_RETENTION` | Completed task retention | `72h` |
 
