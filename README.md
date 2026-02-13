@@ -395,7 +395,7 @@ For production, consider separate API and Worker deployments for independent sca
 ## Observability
 
 - **Prometheus metrics** at `/metrics` - See [Asynq Monitoring](https://github.com/hibiken/asynq/wiki/Monitoring-and-Alerting)
-- **Health check** at `/health` - Returns Redis connection status
+- **Health check** at `/health` - Returns version and Redis connection status
 - **Web UI** - Deploy [Asynqmon](https://github.com/hibiken/asynqmon) for task monitoring
 
 Task lifecycle follows [Asynq's state machine](https://github.com/hibiken/asynq/wiki/Life-of-a-Task):
@@ -415,9 +415,36 @@ Not in scope for initial release, but possible future additions:
 
 ---
 
+## Authorization
+
+aqsh supports identity tracking and per-task group authorization via HTTP headers, designed for use with an authenticating reverse proxy (e.g., [kube-auth-proxy](https://github.com/rophy/kube-auth-proxy)).
+
+### Identity Tracking
+
+The proxy sets `X-Forwarded-User` (configurable via `AQSH_IDENTITY_HEADER`) on authenticated requests. aqsh records this with the task so you can see who submitted it.
+
+Set `AQSH_REQUIRE_IDENTITY=true` to reject requests without this header (401).
+
+### Group Authorization
+
+Tasks can restrict access to specific groups using `allowed_groups` in the task config:
+
+```yaml
+tasks:
+  deploy:
+    script: /tasks/deploy.sh
+    allowed_groups: [deploy-team, platform-team]
+    input: [...]
+```
+
+The proxy sets `X-Forwarded-Groups` (configurable via `AQSH_GROUPS_HEADER`) as a comma-separated list. If a task has `allowed_groups`, aqsh checks that at least one of the user's groups matches. Returns 403 if no match.
+
+Tasks without `allowed_groups` are open to all users (or all authenticated users when `AQSH_REQUIRE_IDENTITY=true`).
+
+---
+
 ## Open Questions
 
 1. **Result size limits** - How large can script output be? (Redis memory)
 2. **Log format** - Plain text vs structured (JSON lines)?
-3. **Authentication** - API auth for multi-tenant scenarios?
-4. **Rate limiting** - Per-task or global rate limits?
+3. **Rate limiting** - Per-task or global rate limits?

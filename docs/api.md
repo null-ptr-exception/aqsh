@@ -110,6 +110,7 @@ data: Deployment complete.
       "timeout": "10m",
       "max_retry": 2,
       "queue": "default",
+      "allowed_groups": ["deploy-team", "platform-team"],
       "input": [
         {
           "name": "version",
@@ -160,6 +161,7 @@ data: Deployment complete.
 ```json
 {
   "status": "healthy",
+  "version": "0.1.0",
   "redis": "connected",
   "mode": "api"
 }
