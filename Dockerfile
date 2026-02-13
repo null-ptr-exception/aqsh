@@ -3,6 +3,7 @@ FROM golang:1.24-alpine AS builder
 
 # Set DEBUG=true for coverage instrumentation
 ARG DEBUG=false
+ARG VERSION=dev
 
 WORKDIR /build
 
@@ -16,9 +17,9 @@ COPY internal/ internal/
 
 # Build binary (coverage instrumentation when DEBUG=true)
 RUN if [ "$DEBUG" = "true" ]; then \
-        CGO_ENABLED=0 GOOS=linux go build -cover -covermode=atomic -o aqsh ./cmd/aqsh; \
+        CGO_ENABLED=0 GOOS=linux go build -cover -covermode=atomic -ldflags="-X main.Version=${VERSION}" -o aqsh ./cmd/aqsh; \
     else \
-        CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o aqsh ./cmd/aqsh; \
+        CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s -X main.Version=${VERSION}" -o aqsh ./cmd/aqsh; \
     fi
 
 # Runtime stage

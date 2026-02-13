@@ -29,9 +29,10 @@ type Server struct {
 	inspector *asynq.Inspector
 	logStream *logs.LogStreamer
 	rdb       redis.UniversalClient
+	version   string
 }
 
-func New(cfg *config.Config, tasksConfig *tasks.TasksConfig, rdb redis.UniversalClient, asynqOpt asynq.RedisConnOpt) *Server {
+func New(cfg *config.Config, tasksConfig *tasks.TasksConfig, rdb redis.UniversalClient, asynqOpt asynq.RedisConnOpt, version string) *Server {
 	return &Server{
 		cfg:       cfg,
 		tasks:     tasksConfig,
@@ -39,6 +40,7 @@ func New(cfg *config.Config, tasksConfig *tasks.TasksConfig, rdb redis.Universal
 		inspector: asynq.NewInspector(asynqOpt),
 		logStream: logs.NewLogStreamer(rdb, cfg.LogRetention),
 		rdb:       rdb,
+		version:   version,
 	}
 }
 
@@ -339,9 +341,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.jsonResponse(w, http.StatusOK, map[string]any{
-		"status": "healthy",
-		"redis":  redisStatus,
-		"mode":   s.cfg.Mode,
+		"status":  "healthy",
+		"version": s.version,
+		"redis":   redisStatus,
+		"mode":    s.cfg.Mode,
 	})
 }
 

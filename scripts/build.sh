@@ -20,7 +20,7 @@ echo "Building aqsh with $RUNTIME..."
 echo "Version: $VERSION"
 
 # Build image
-$RUNTIME build -t aqsh:latest .
+$RUNTIME build --build-arg VERSION="$VERSION" -t aqsh:latest .
 
 # Tag with version
 $RUNTIME tag aqsh:latest "rophy/aqsh:${VERSION}"

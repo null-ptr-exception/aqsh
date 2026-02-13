@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -17,11 +18,21 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+var Version = "dev"
+
 func main() {
 	mode := flag.String("mode", "", "Run mode: api, worker, or both")
 	tasksConfig := flag.String("tasks", "", "Path to tasks.yaml")
 	bind := flag.String("bind", "", "API bind address")
+	version := flag.Bool("version", false, "Print version and exit")
 	flag.Parse()
+
+	if *version {
+		fmt.Println(Version)
+		os.Exit(0)
+	}
+
+	log.Printf("aqsh version %s", Version)
 
 	cfg := config.Load()
 
@@ -102,7 +113,7 @@ func main() {
 	g, ctx := errgroup.WithContext(ctx)
 
 	if cfg.Mode == "api" || cfg.Mode == "both" {
-		apiServer := api.New(cfg, tasksCfg, rdb, asynqOpt)
+		apiServer := api.New(cfg, tasksCfg, rdb, asynqOpt, Version)
 		g.Go(func() error {
 			return apiServer.Run(ctx)
 		})
