@@ -19,6 +19,7 @@ import (
 	"github.com/rophy/aqsh/internal/config"
 	"github.com/rophy/aqsh/internal/logs"
 	"github.com/rophy/aqsh/internal/tasks"
+	"github.com/rophy/aqsh/internal/webhook"
 	"github.com/rophy/aqsh/internal/worker"
 )
 
@@ -62,6 +63,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("GET /tasks/{id}/logs", s.handleGetLogs)
 	mux.HandleFunc("GET /tasks", s.handleListTasks)
 	mux.HandleFunc("GET /health", s.handleHealth)
+	mux.HandleFunc("POST /webhooks/alertmanager", s.handleAlertmanagerWebhook)
 	mux.Handle("GET /metrics", promhttp.Handler())
 
 	// Coverage endpoint - only available when GOCOVERDIR is set
@@ -280,6 +282,93 @@ func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+func (s *Server) handleAlertmanagerWebhook(w http.ResponseWriter, r *http.Request) {
+	var wh webhook.AlertmanagerWebhook
+	if err := json.NewDecoder(r.Body).Decode(&wh); err != nil {
+		s.jsonError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	if len(wh.Alerts) == 0 {
+		s.jsonError(w, http.StatusBadRequest, "no alerts in payload")
+		return
+	}
+
+	type alertResult struct {
+		AlertFingerprint string `json:"alert_fingerprint"`
+		TaskID           string `json:"task_id,omitempty"`
+		TaskName         string `json:"task_name,omitempty"`
+		Status           string `json:"status,omitempty"`
+		Error            string `json:"error,omitempty"`
+	}
+
+	results := make([]alertResult, 0, len(wh.Alerts))
+	successCount := 0
+
+	for _, alert := range wh.Alerts {
+		taskName := webhook.ResolveTaskName(alert, wh.CommonLabels)
+		if taskName == "" {
+			results = append(results, alertResult{
+				AlertFingerprint: alert.Fingerprint,
+				Error:            "no task name resolved",
+			})
+			continue
+		}
+
+		taskDef, err := s.tasks.Resolve(taskName)
+		if err != nil {
+			log.Printf("Webhook: unknown task %q for alert %s", taskName, alert.Fingerprint)
+			results = append(results, alertResult{
+				AlertFingerprint: alert.Fingerprint,
+				Error:            "unknown task: " + taskName,
+			})
+			continue
+		}
+
+		env := webhook.AlertToEnv(alert, wh)
+
+		taskPayload := worker.TaskPayload{
+			Name:      taskName,
+			CreatedAt: time.Now(),
+			Env:       env,
+		}
+		taskBytes, _ := json.Marshal(taskPayload)
+
+		task := asynq.NewTask(worker.TaskType, taskBytes,
+			asynq.Queue(taskDef.Queue),
+			asynq.Timeout(taskDef.Timeout),
+			asynq.MaxRetry(taskDef.MaxRetry),
+			asynq.Retention(s.cfg.ResultRetention),
+		)
+
+		info, err := s.client.Enqueue(task)
+		if err != nil {
+			log.Printf("Webhook: failed to enqueue task %q: %v", taskName, err)
+			results = append(results, alertResult{
+				AlertFingerprint: alert.Fingerprint,
+				Error:            "enqueue failed: " + err.Error(),
+			})
+			continue
+		}
+
+		log.Printf("Webhook: enqueued task %q (id=%s) for alert %s", taskName, info.ID, alert.Fingerprint)
+		successCount++
+		results = append(results, alertResult{
+			AlertFingerprint: alert.Fingerprint,
+			TaskID:           info.ID,
+			TaskName:         taskName,
+			Status:           "pending",
+		})
+	}
+
+	if successCount == 0 {
+		s.jsonResponse(w, http.StatusBadRequest, map[string]any{"results": results})
+		return
+	}
+
+	s.jsonResponse(w, http.StatusAccepted, map[string]any{"results": results})
 }
 
 func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {

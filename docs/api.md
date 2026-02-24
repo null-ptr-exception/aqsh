@@ -155,6 +155,68 @@ data: Deployment complete.
 }
 ```
 
+## POST /webhooks/alertmanager - Alertmanager Webhook
+
+Receives Alertmanager webhook payloads and creates tasks for each alert.
+
+**Task Resolution:** For each alert, the task name is resolved in order:
+1. `alert.labels.aqsh_task`
+2. `commonLabels.aqsh_task`
+3. `alert.labels.alertname`
+
+**Environment Variables:** Each task receives alert context as env vars:
+
+| Variable | Source |
+|----------|--------|
+| `ALERT_STATUS` | alert status (firing/resolved) |
+| `ALERT_NAME` | alertname label |
+| `ALERT_INSTANCE` | instance label |
+| `ALERT_SEVERITY` | severity label |
+| `ALERT_FINGERPRINT` | alert fingerprint |
+| `ALERT_STARTS_AT` | alert start time |
+| `ALERT_ENDS_AT` | alert end time |
+| `ALERT_GENERATOR_URL` | Prometheus generator URL |
+| `ALERT_LABELS_JSON` | all labels as JSON |
+| `ALERT_ANNOTATIONS_JSON` | all annotations as JSON |
+| `ALERTMANAGER_EXTERNAL_URL` | Alertmanager URL |
+| `ALERT_GROUP_KEY` | group key |
+| `ALERT_LABEL_<KEY>` | each label (key uppercased) |
+| `ALERT_ANNOTATION_<KEY>` | each annotation (key uppercased) |
+
+**Request:**
+```http
+POST /webhooks/alertmanager
+Content-Type: application/json
+
+{
+  "version": "4",
+  "status": "firing",
+  "groupKey": "{}:{alertname=\"HighMemory\"}",
+  "commonLabels": {"alertname": "HighMemory", "aqsh_task": "alert-handler"},
+  "externalURL": "http://alertmanager:9093",
+  "alerts": [{
+    "status": "firing",
+    "labels": {"alertname": "HighMemory", "aqsh_task": "alert-handler", "instance": "web-1", "severity": "critical"},
+    "annotations": {"summary": "Memory usage is high"},
+    "startsAt": "2024-01-01T00:00:00Z",
+    "endsAt": "0001-01-01T00:00:00Z",
+    "fingerprint": "abc123"
+  }]
+}
+```
+
+**Response (202 Accepted):** At least one alert was successfully enqueued.
+```json
+{
+  "results": [
+    {"alert_fingerprint": "abc123", "task_id": "...", "task_name": "alert-handler", "status": "pending"},
+    {"alert_fingerprint": "def456", "error": "unknown task: nonexistent"}
+  ]
+}
+```
+
+**Response (400 Bad Request):** All alerts failed or invalid payload.
+
 ## GET /health - Health Check
 
 **Response (200 OK):**
