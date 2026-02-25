@@ -8,13 +8,16 @@ import (
 
 // AlertmanagerWebhook represents the payload sent by Alertmanager webhook receiver.
 type AlertmanagerWebhook struct {
-	Version      string            `json:"version"`
-	GroupKey     string            `json:"groupKey"`
-	Status       string            `json:"status"`
-	Receiver     string            `json:"receiver"`
-	ExternalURL  string            `json:"externalURL"`
-	CommonLabels map[string]string `json:"commonLabels"`
-	Alerts       []Alert           `json:"alerts"`
+	Version           string            `json:"version"`
+	GroupKey          string            `json:"groupKey"`
+	Status            string            `json:"status"`
+	Receiver          string            `json:"receiver"`
+	ExternalURL       string            `json:"externalURL"`
+	CommonLabels      map[string]string `json:"commonLabels"`
+	CommonAnnotations map[string]string `json:"commonAnnotations"`
+	GroupLabels       map[string]string `json:"groupLabels"`
+	TruncatedAlerts   int               `json:"truncatedAlerts"`
+	Alerts            []Alert           `json:"alerts"`
 }
 
 // Alert represents a single alert in the Alertmanager webhook payload.
@@ -45,7 +48,7 @@ var envKeyRegexp = regexp.MustCompile(`[^A-Z0-9_]`)
 // sanitizeEnvKey converts a string to a valid env var key component.
 // Only [A-Z0-9_] are allowed.
 func sanitizeEnvKey(key string) string {
-	return envKeyRegexp.ReplaceAllString(strings.ToUpper(strings.ReplaceAll(key, "-", "_")), "")
+	return envKeyRegexp.ReplaceAllString(strings.ToUpper(key), "_")
 }
 
 // AlertToEnv converts an alert and its parent webhook into a map of environment variables.

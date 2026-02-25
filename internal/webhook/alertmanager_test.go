@@ -44,6 +44,12 @@ func TestResolveTaskName(t *testing.T) {
 			commonLabels: nil,
 			want:         "DiskFull",
 		},
+		{
+			name:         "empty when no labels at all",
+			alert:        Alert{Labels: map[string]string{}},
+			commonLabels: nil,
+			want:         "",
+		},
 	}
 
 	for _, tt := range tests {
@@ -140,10 +146,10 @@ func TestSanitizeEnvKey(t *testing.T) {
 	}{
 		{"alertname", "ALERTNAME"},
 		{"app-name", "APP_NAME"},
-		{"my.label.key", "MYLABELKEY"},
+		{"my.label.key", "MY_LABEL_KEY"},
 		{"ALREADY_UPPER", "ALREADY_UPPER"},
-		{"with spaces", "WITHSPACES"},
-		{"special!@#chars", "SPECIALCHARS"},
+		{"with spaces", "WITH_SPACES"},
+		{"special!@#chars", "SPECIAL___CHARS"},
 		{"under_score", "UNDER_SCORE"},
 		{"123numeric", "123NUMERIC"},
 	}

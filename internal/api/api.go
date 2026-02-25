@@ -334,7 +334,15 @@ func (s *Server) handleAlertmanagerWebhook(w http.ResponseWriter, r *http.Reques
 			CreatedAt: time.Now(),
 			Env:       env,
 		}
-		taskBytes, _ := json.Marshal(taskPayload)
+		taskBytes, err := json.Marshal(taskPayload)
+		if err != nil {
+			log.Printf("Webhook: failed to marshal task payload: %v", err)
+			results = append(results, alertResult{
+				AlertFingerprint: alert.Fingerprint,
+				Error:            "internal error",
+			})
+			continue
+		}
 
 		task := asynq.NewTask(worker.TaskType, taskBytes,
 			asynq.Queue(taskDef.Queue),

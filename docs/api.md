@@ -209,8 +209,7 @@ Content-Type: application/json
 ```json
 {
   "results": [
-    {"alert_fingerprint": "abc123", "task_id": "...", "task_name": "alert-handler", "status": "pending"},
-    {"alert_fingerprint": "def456", "error": "unknown task: nonexistent"}
+    {"alert_fingerprint": "abc123", "task_id": "...", "task_name": "alert-handler", "status": "pending"}
   ]
 }
 ```
