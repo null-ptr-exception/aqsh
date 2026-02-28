@@ -38,8 +38,10 @@ jobs:
     needs: [test, build]
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v4
 
@@ -58,9 +60,24 @@ jobs:
             type=raw,value=latest
 
       - uses: docker/build-push-action@v6
+        id: push
         with:
           context: .
           push: true
           build-args: VERSION=${{ github.ref_name }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_REF: ${{ env.IMAGE }}:${{ github.ref_name }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          NOTES=$(printf '## Container Image\n\n```\ndocker pull %s\n```\n\nDigest: `%s`' "$IMAGE_REF" "$DIGEST")
+          gh release create "${{ github.ref_name }}" --generate-notes --notes "$NOTES"
