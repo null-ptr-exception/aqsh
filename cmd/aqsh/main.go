@@ -27,16 +27,18 @@ func main() {
 	version := flag.Bool("version", false, "Print version and exit")
 	flag.Parse()
 
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
-
 	if *version {
 		fmt.Println(Version)
 		os.Exit(0)
 	}
 
-	slog.Info("aqsh starting", "version", Version)
-
 	cfg := config.Load()
+
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: cfg.LogLevel,
+	})))
+
+	slog.Info("aqsh starting", "version", Version)
 
 	// CLI flags override env vars
 	if *mode != "" {

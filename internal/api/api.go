@@ -81,7 +81,11 @@ func (s *Server) accessLog(next http.Handler) http.Handler {
 		if groups := r.Header.Get(s.cfg.GroupsHeader); groups != "" {
 			attrs = append(attrs, slog.String("groups", groups))
 		}
-		slog.LogAttrs(r.Context(), slog.LevelInfo, "http request", attrs...)
+		level := slog.LevelInfo
+		if r.URL.Path == "/health" || r.URL.Path == "/metrics" {
+			level = slog.LevelDebug
+		}
+		slog.LogAttrs(r.Context(), level, "http request", attrs...)
 	})
 }
 

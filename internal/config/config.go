@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ type Config struct {
 	IdentityHeader    string
 	RequireIdentity   bool
 	GroupsHeader      string
+	LogLevel          slog.Level
 	Redis             RedisConfig
 }
 
@@ -49,6 +51,7 @@ func Load() *Config {
 		IdentityHeader:    getEnv("AQSH_IDENTITY_HEADER", "X-Forwarded-User"),
 		RequireIdentity:   getEnvBool("AQSH_REQUIRE_IDENTITY", false),
 		GroupsHeader:      getEnv("AQSH_GROUPS_HEADER", "X-Forwarded-Groups"),
+		LogLevel:          getEnvLogLevel("AQSH_LOG_LEVEL", slog.LevelInfo),
 		Redis: RedisConfig{
 			Addr:           getEnv("AQSH_REDIS_ADDR", "localhost:6379"),
 			Password:       getEnv("AQSH_REDIS_PASSWORD", ""),
@@ -85,6 +88,16 @@ func getEnvList(key string, defaultVal []string) []string {
 func getEnvBool(key string, defaultVal bool) bool {
 	if v := os.Getenv(key); v != "" {
 		return v == "true" || v == "1"
+	}
+	return defaultVal
+}
+
+func getEnvLogLevel(key string, defaultVal slog.Level) slog.Level {
+	if v := os.Getenv(key); v != "" {
+		var level slog.Level
+		if err := level.UnmarshalText([]byte(v)); err == nil {
+			return level
+		}
 	}
 	return defaultVal
 }

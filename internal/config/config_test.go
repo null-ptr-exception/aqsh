@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -25,6 +26,7 @@ func TestLoad(t *testing.T) {
 		"AQSH_IDENTITY_HEADER",
 		"AQSH_REQUIRE_IDENTITY",
 		"AQSH_GROUPS_HEADER",
+		"AQSH_LOG_LEVEL",
 	}
 	for _, v := range envVars {
 		os.Unsetenv(v)
@@ -65,6 +67,9 @@ func TestLoad(t *testing.T) {
 		}
 		if cfg.GroupsHeader != "X-Forwarded-Groups" {
 			t.Errorf("expected GroupsHeader 'X-Forwarded-Groups', got %q", cfg.GroupsHeader)
+		}
+		if cfg.LogLevel != slog.LevelInfo {
+			t.Errorf("expected LogLevel INFO, got %v", cfg.LogLevel)
 		}
 		if cfg.Redis.Addr != "localhost:6379" {
 			t.Errorf("expected Redis.Addr 'localhost:6379', got %q", cfg.Redis.Addr)
@@ -213,6 +218,47 @@ func TestGetEnvBool(t *testing.T) {
 		got := getEnvBool("TEST_BOOL", true)
 		if got {
 			t.Error("expected false for non-true/1 value, got true")
+		}
+	})
+}
+
+func TestGetEnvLogLevel(t *testing.T) {
+	os.Unsetenv("TEST_LOG_LEVEL")
+
+	t.Run("default", func(t *testing.T) {
+		got := getEnvLogLevel("TEST_LOG_LEVEL", slog.LevelInfo)
+		if got != slog.LevelInfo {
+			t.Errorf("expected INFO, got %v", got)
+		}
+	})
+
+	t.Run("debug", func(t *testing.T) {
+		os.Setenv("TEST_LOG_LEVEL", "debug")
+		defer os.Unsetenv("TEST_LOG_LEVEL")
+
+		got := getEnvLogLevel("TEST_LOG_LEVEL", slog.LevelInfo)
+		if got != slog.LevelDebug {
+			t.Errorf("expected DEBUG, got %v", got)
+		}
+	})
+
+	t.Run("DEBUG uppercase", func(t *testing.T) {
+		os.Setenv("TEST_LOG_LEVEL", "DEBUG")
+		defer os.Unsetenv("TEST_LOG_LEVEL")
+
+		got := getEnvLogLevel("TEST_LOG_LEVEL", slog.LevelInfo)
+		if got != slog.LevelDebug {
+			t.Errorf("expected DEBUG, got %v", got)
+		}
+	})
+
+	t.Run("invalid falls back to default", func(t *testing.T) {
+		os.Setenv("TEST_LOG_LEVEL", "bogus")
+		defer os.Unsetenv("TEST_LOG_LEVEL")
+
+		got := getEnvLogLevel("TEST_LOG_LEVEL", slog.LevelInfo)
+		if got != slog.LevelInfo {
+			t.Errorf("expected INFO, got %v", got)
 		}
 	})
 }
