@@ -4,7 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -27,12 +27,14 @@ func main() {
 	version := flag.Bool("version", false, "Print version and exit")
 	flag.Parse()
 
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
+
 	if *version {
 		fmt.Println(Version)
 		os.Exit(0)
 	}
 
-	log.Printf("aqsh version %s", Version)
+	slog.Info("aqsh starting", "version", Version)
 
 	cfg := config.Load()
 
@@ -51,15 +53,17 @@ func main() {
 	switch cfg.Mode {
 	case "api", "worker", "both":
 	default:
-		log.Fatalf("Invalid mode %q: must be api, worker, or both", cfg.Mode)
+		slog.Error("invalid mode", "mode", cfg.Mode)
+		os.Exit(1)
 	}
 
 	// Load tasks config
 	tasksCfg, err := tasks.Load(cfg.TasksConfig)
 	if err != nil {
-		log.Fatalf("Failed to load tasks config: %v", err)
+		slog.Error("failed to load tasks config", "error", err)
+		os.Exit(1)
 	}
-	log.Printf("Loaded %d tasks from %s", len(tasksCfg.Tasks), cfg.TasksConfig)
+	slog.Info("loaded tasks config", "count", len(tasksCfg.Tasks), "path", cfg.TasksConfig)
 
 	// Setup Redis
 	var rdb redis.UniversalClient
@@ -96,16 +100,17 @@ func main() {
 	defer cancel()
 
 	if err := rdb.Ping(ctx).Err(); err != nil {
-		log.Fatalf("Failed to connect to Redis: %v", err)
+		slog.Error("failed to connect to Redis", "error", err)
+		os.Exit(1)
 	}
-	log.Printf("Connected to Redis")
+	slog.Info("connected to Redis")
 
 	// Setup signal handling
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		sig := <-sigCh
-		log.Printf("Received signal %v, shutting down...", sig)
+		slog.Info("received signal, shutting down", "signal", sig)
 		cancel()
 	}()
 
@@ -127,8 +132,9 @@ func main() {
 	}
 
 	if err := g.Wait(); err != nil && err != context.Canceled {
-		log.Fatalf("Error: %v", err)
+		slog.Error("runtime error", "error", err)
+		os.Exit(1)
 	}
 
-	log.Printf("Shutdown complete")
+	slog.Info("shutdown complete")
 }

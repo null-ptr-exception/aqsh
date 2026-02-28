@@ -17,6 +17,63 @@ import (
 	"github.com/rophy/aqsh/internal/tasks"
 )
 
+func TestStatusResponseWriter(t *testing.T) {
+	t.Run("captures status code", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		sw := &statusResponseWriter{ResponseWriter: rec, status: http.StatusOK}
+		sw.WriteHeader(http.StatusNotFound)
+		if sw.status != http.StatusNotFound {
+			t.Errorf("expected status %d, got %d", http.StatusNotFound, sw.status)
+		}
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("expected underlying status %d, got %d", http.StatusNotFound, rec.Code)
+		}
+	})
+
+	t.Run("Unwrap preserves Flusher via ResponseController", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		sw := &statusResponseWriter{ResponseWriter: rec, status: http.StatusOK}
+		rc := http.NewResponseController(sw)
+		if err := rc.Flush(); err != nil {
+			t.Errorf("expected Flush via ResponseController to succeed, got %v", err)
+		}
+	})
+}
+
+func TestAccessLogMiddleware(t *testing.T) {
+	s := &Server{
+		cfg: &config.Config{
+			IdentityHeader: "X-Forwarded-User",
+			GroupsHeader:   "X-Forwarded-Groups",
+		},
+	}
+
+	handler := s.accessLog(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	}))
+
+	t.Run("passes through status code", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/health", nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusCreated {
+			t.Errorf("expected status %d, got %d", http.StatusCreated, rec.Code)
+		}
+	})
+
+	t.Run("default status is 200 when handler does not call WriteHeader", func(t *testing.T) {
+		noWriteHandler := s.accessLog(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte("ok"))
+		}))
+		req := httptest.NewRequest(http.MethodGet, "/health", nil)
+		rec := httptest.NewRecorder()
+		noWriteHandler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Errorf("expected status %d, got %d", http.StatusOK, rec.Code)
+		}
+	})
+}
+
 func TestStateToStatus(t *testing.T) {
 	tests := []struct {
 		state    asynq.TaskState

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -104,10 +105,14 @@ func (w *Worker) handleTask(ctx context.Context, task *asynq.Task) error {
 		return fmt.Errorf("resolve task: %w", err)
 	}
 
+	slog.Info("task started", "task_id", taskID, "task", payload.Name, "identity", payload.Identity)
+
 	result, err := w.executeScript(ctx, task.ResultWriter(), taskID, taskDef, payload.Env, payload.Identity, payload.Groups)
 	if err != nil {
 		return err
 	}
+
+	slog.Info("task completed", "task_id", taskID, "task", payload.Name, "exit_code", result.ExitCode)
 
 	resultBytes, _ := json.Marshal(result)
 	if _, err := task.ResultWriter().Write(resultBytes); err != nil {

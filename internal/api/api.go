@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"runtime/coverage"
@@ -44,6 +44,47 @@ func New(cfg *config.Config, tasksConfig *tasks.TasksConfig, rdb redis.Universal
 	}
 }
 
+type statusResponseWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusResponseWriter) WriteHeader(code int) {
+	w.status = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *statusResponseWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (w *statusResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
+func (s *Server) accessLog(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		sw := &statusResponseWriter{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(sw, r)
+		attrs := []slog.Attr{
+			slog.String("method", r.Method),
+			slog.String("path", r.URL.Path),
+			slog.Int("status", sw.status),
+			slog.String("duration", time.Since(start).String()),
+		}
+		if identity := r.Header.Get(s.cfg.IdentityHeader); identity != "" {
+			attrs = append(attrs, slog.String("user", identity))
+		}
+		if groups := r.Header.Get(s.cfg.GroupsHeader); groups != "" {
+			attrs = append(attrs, slog.String("groups", groups))
+		}
+		slog.LogAttrs(r.Context(), slog.LevelInfo, "http request", attrs...)
+	})
+}
+
 func (s *Server) Run(ctx context.Context) error {
 	// Ensure all configured queues are registered in Redis
 	// This is needed for Inspector.GetTaskInfo to work
@@ -67,12 +108,12 @@ func (s *Server) Run(ctx context.Context) error {
 	// Coverage endpoint - only available when GOCOVERDIR is set
 	if coverDir := os.Getenv("GOCOVERDIR"); coverDir != "" {
 		mux.HandleFunc("POST /debug/coverage/flush", s.handleCoverageFlush)
-		log.Printf("Coverage endpoint enabled (GOCOVERDIR=%s)", coverDir)
+		slog.Info("coverage endpoint enabled", "cover_dir", coverDir)
 	}
 
 	srv := &http.Server{
 		Addr:    s.cfg.Bind,
-		Handler: mux,
+		Handler: s.accessLog(mux),
 	}
 
 	go func() {
@@ -82,7 +123,7 @@ func (s *Server) Run(ctx context.Context) error {
 		srv.Shutdown(shutdownCtx)
 	}()
 
-	log.Printf("API server listening on %s", s.cfg.Bind)
+	slog.Info("API server listening", "addr", s.cfg.Bind)
 	return srv.ListenAndServe()
 }
 
@@ -261,7 +302,7 @@ func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 
 		entries, err := s.logStream.Read(ctx, taskID, lastID, blockTime)
 		if err != nil {
-			log.Printf("Error reading logs: %v", err)
+			slog.Error("error reading logs", "task_id", taskID, "error", err)
 			return
 		}
 
