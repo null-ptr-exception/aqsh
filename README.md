@@ -142,6 +142,7 @@ tasks:
     description: "Deploy application to environment"
     timeout: 10m
     max_retry: 2
+    allowed_users: [system:serviceaccount:deploy:deployer]
     allowed_groups: [deploy-team, platform-team]
 
     input:
@@ -427,19 +428,23 @@ Set `AQSH_REQUIRE_IDENTITY=true` to reject requests without this header (401).
 
 ### Group Authorization
 
-Tasks can restrict access to specific groups using `allowed_groups` in the task config:
+Tasks can restrict access using `allowed_users` and/or `allowed_groups` in the task config:
 
 ```yaml
 tasks:
   deploy:
     script: /tasks/deploy.sh
+    allowed_users: [system:serviceaccount:deploy:deployer]
     allowed_groups: [deploy-team, platform-team]
     input: [...]
 ```
 
-The proxy sets `X-Forwarded-Groups` (configurable via `AQSH_GROUPS_HEADER`) as a comma-separated list. If a task has `allowed_groups`, aqsh checks that at least one of the user's groups matches. Returns 403 if no match.
+- `allowed_users` matches the identity header against the list (exact match).
+- `allowed_groups` matches the groups header (comma-separated) against the list.
+- If both are set, the request is authorized if **either** matches (OR logic). This mirrors Kubernetes RBAC `RoleBinding.subjects` semantics.
+- Returns 403 if neither matches.
 
-Tasks without `allowed_groups` are open to all users (or all authenticated users when `AQSH_REQUIRE_IDENTITY=true`).
+Tasks without `allowed_users` or `allowed_groups` are open to all users (or all authenticated users when `AQSH_REQUIRE_IDENTITY=true`).
 
 ---
 

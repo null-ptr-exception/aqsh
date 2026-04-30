@@ -759,6 +759,141 @@ func TestHandleSubmitTaskGroupAuthorization(t *testing.T) {
 	})
 }
 
+func TestHandleSubmitTaskUserAuthorization(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	tasksConfig := &tasks.TasksConfig{
+		Tasks: map[string]tasks.TaskDef{
+			"sa-only": {
+				Script:       "sa.sh",
+				AllowedUsers: []string{"system:serviceaccount:rdsma:sertdxkkk"},
+			},
+			"users-and-groups": {
+				Script:        "both.sh",
+				AllowedUsers:  []string{"alice"},
+				AllowedGroups: []string{"ops"},
+			},
+		},
+	}
+
+	s := &Server{
+		cfg: &config.Config{
+			IdentityHeader: "X-Forwarded-User",
+			GroupsHeader:   "X-Forwarded-Groups",
+		},
+		tasks:     tasksConfig,
+		rdb:       rdb,
+		logStream: logs.NewLogStreamer(rdb, time.Hour),
+		client:    asynq.NewClient(asynq.RedisClientOpt{Addr: mr.Addr()}),
+	}
+
+	t.Run("allowed user passes", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/tasks/sa-only", strings.NewReader(`{}`))
+		req.SetPathValue("name", "sa-only")
+		req.Header.Set("X-Forwarded-User", "system:serviceaccount:rdsma:sertdxkkk")
+		rec := httptest.NewRecorder()
+
+		s.handleSubmitTask(rec, req)
+
+		if rec.Code != http.StatusAccepted {
+			t.Errorf("expected status %d, got %d: %s", http.StatusAccepted, rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("wrong user returns 403", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/tasks/sa-only", strings.NewReader(`{}`))
+		req.SetPathValue("name", "sa-only")
+		req.Header.Set("X-Forwarded-User", "system:serviceaccount:other:other")
+		rec := httptest.NewRecorder()
+
+		s.handleSubmitTask(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("expected status %d, got %d", http.StatusForbidden, rec.Code)
+		}
+	})
+
+	t.Run("no identity returns 403 for user-restricted task", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/tasks/sa-only", strings.NewReader(`{}`))
+		req.SetPathValue("name", "sa-only")
+		rec := httptest.NewRecorder()
+
+		s.handleSubmitTask(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("expected status %d, got %d", http.StatusForbidden, rec.Code)
+		}
+	})
+
+	t.Run("user match passes even without matching group", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/tasks/users-and-groups", strings.NewReader(`{}`))
+		req.SetPathValue("name", "users-and-groups")
+		req.Header.Set("X-Forwarded-User", "alice")
+		req.Header.Set("X-Forwarded-Groups", "dev")
+		rec := httptest.NewRecorder()
+
+		s.handleSubmitTask(rec, req)
+
+		if rec.Code != http.StatusAccepted {
+			t.Errorf("expected status %d, got %d: %s", http.StatusAccepted, rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("group match passes even without matching user", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/tasks/users-and-groups", strings.NewReader(`{}`))
+		req.SetPathValue("name", "users-and-groups")
+		req.Header.Set("X-Forwarded-User", "bob")
+		req.Header.Set("X-Forwarded-Groups", "ops")
+		rec := httptest.NewRecorder()
+
+		s.handleSubmitTask(rec, req)
+
+		if rec.Code != http.StatusAccepted {
+			t.Errorf("expected status %d, got %d: %s", http.StatusAccepted, rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("neither user nor group match returns 403", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/tasks/users-and-groups", strings.NewReader(`{}`))
+		req.SetPathValue("name", "users-and-groups")
+		req.Header.Set("X-Forwarded-User", "bob")
+		req.Header.Set("X-Forwarded-Groups", "dev")
+		rec := httptest.NewRecorder()
+
+		s.handleSubmitTask(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("expected status %d, got %d", http.StatusForbidden, rec.Code)
+		}
+	})
+}
+
+func TestIsAllowedUser(t *testing.T) {
+	tests := []struct {
+		name     string
+		identity string
+		allowed  []string
+		expected bool
+	}{
+		{"match", "alice", []string{"alice", "bob"}, true},
+		{"no match", "charlie", []string{"alice", "bob"}, false},
+		{"empty identity", "", []string{"alice"}, false},
+		{"empty allowed", "alice", nil, false},
+		{"exact SA match", "system:serviceaccount:rdsma:sertdxkkk", []string{"system:serviceaccount:rdsma:sertdxkkk"}, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := isAllowedUser(tc.identity, tc.allowed)
+			if got != tc.expected {
+				t.Errorf("isAllowedUser(%q, %v) = %v, want %v", tc.identity, tc.allowed, got, tc.expected)
+			}
+		})
+	}
+}
+
 func TestSplitGroups(t *testing.T) {
 	tests := []struct {
 		name     string
