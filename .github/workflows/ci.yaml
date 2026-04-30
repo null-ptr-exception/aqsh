@@ -41,7 +41,6 @@ jobs:
       contents: write
       packages: write
       id-token: write
-      attestations: write
     steps:
       - uses: actions/checkout@v4
 
@@ -67,12 +66,6 @@ jobs:
           build-args: VERSION=${{ github.ref_name }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-
-      - uses: actions/attest-build-provenance@v2
-        with:
-          subject-name: ${{ env.IMAGE }}
-          subject-digest: ${{ steps.push.outputs.digest }}
-          push-to-registry: true
 
       - env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
