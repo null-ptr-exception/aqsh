@@ -8,7 +8,7 @@ on:
     branches: [main]
 
 env:
-  IMAGE: ghcr.io/rophy/aqsh
+  IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
   test:
