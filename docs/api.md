@@ -18,9 +18,9 @@ X-Forwarded-User: alice@example.com
 
 The identity header (default `X-Forwarded-User`, configurable via `AQSH_IDENTITY_HEADER`) identifies who submitted the task. When `AQSH_REQUIRE_IDENTITY=true`, requests without this header are rejected with 401.
 
-**Group Authorization:**
+**Authorization:**
 
-Tasks with `allowed_groups` in their config require the groups header (default `X-Forwarded-Groups`, configurable via `AQSH_GROUPS_HEADER`) to contain at least one matching group. Groups are comma-separated.
+Tasks can restrict access using `allowed_users` and/or `allowed_groups` in their config. If either matches, the request is authorized (OR logic). `allowed_users` matches against the identity header; `allowed_groups` matches against the groups header (comma-separated). If neither is configured, the task is open to all.
 
 **Response (202 Accepted):**
 ```json
@@ -35,7 +35,7 @@ Tasks with `allowed_groups` in their config require the groups header (default `
 | Status | Reason |
 |--------|--------|
 | 401 | Missing identity header (when `AQSH_REQUIRE_IDENTITY=true`) |
-| 403 | Not authorized for this task (group check failed) |
+| 403 | Not authorized for this task (user/group check failed) |
 | 400 | Validation error (missing field, invalid pattern, etc.) |
 | 404 | Unknown task |
 | 503 | Redis unavailable |

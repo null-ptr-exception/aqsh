@@ -146,10 +146,12 @@ func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Group authorization
+	// Authorization: allowed_users OR allowed_groups
 	groups := r.Header.Get(s.cfg.GroupsHeader)
-	if len(taskDef.AllowedGroups) > 0 {
-		if !hasAnyGroup(splitGroups(groups), taskDef.AllowedGroups) {
+	if len(taskDef.AllowedUsers) > 0 || len(taskDef.AllowedGroups) > 0 {
+		userOK := len(taskDef.AllowedUsers) > 0 && isAllowedUser(identity, taskDef.AllowedUsers)
+		groupOK := len(taskDef.AllowedGroups) > 0 && hasAnyGroup(splitGroups(groups), taskDef.AllowedGroups)
+		if !userOK && !groupOK {
 			s.jsonError(w, http.StatusForbidden, "not authorized for this task")
 			return
 		}
@@ -370,6 +372,9 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 		if len(taskDef.AllowedGroups) > 0 {
 			taskInfo["allowed_groups"] = taskDef.AllowedGroups
 		}
+		if len(taskDef.AllowedUsers) > 0 {
+			taskInfo["allowed_users"] = taskDef.AllowedUsers
+		}
 		result[name] = taskInfo
 	}
 
@@ -433,6 +438,18 @@ func splitGroups(header string) []string {
 		}
 	}
 	return groups
+}
+
+func isAllowedUser(identity string, allowedUsers []string) bool {
+	if identity == "" {
+		return false
+	}
+	for _, u := range allowedUsers {
+		if u != "" && identity == u {
+			return true
+		}
+	}
+	return false
 }
 
 func hasAnyGroup(userGroups, allowedGroups []string) bool {

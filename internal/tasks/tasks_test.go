@@ -342,6 +342,41 @@ func TestTasksConfigResolve(t *testing.T) {
 			t.Errorf("expected empty AllowedGroups, got %v", resolved.AllowedGroups)
 		}
 	})
+
+	t.Run("resolve allowed_users", func(t *testing.T) {
+		cfg := &TasksConfig{
+			Tasks: map[string]TaskDef{
+				"sa-only": {
+					Script:       "sa.sh",
+					AllowedUsers: []string{"system:serviceaccount:rdsma:sertdxkkk"},
+				},
+				"both": {
+					Script:        "both.sh",
+					AllowedUsers:  []string{"alice"},
+					AllowedGroups: []string{"ops"},
+				},
+			},
+		}
+
+		resolved, err := cfg.Resolve("sa-only")
+		if err != nil {
+			t.Fatalf("Resolve() error = %v", err)
+		}
+		if len(resolved.AllowedUsers) != 1 || resolved.AllowedUsers[0] != "system:serviceaccount:rdsma:sertdxkkk" {
+			t.Errorf("expected AllowedUsers [system:serviceaccount:rdsma:sertdxkkk], got %v", resolved.AllowedUsers)
+		}
+
+		resolved, err = cfg.Resolve("both")
+		if err != nil {
+			t.Fatalf("Resolve() error = %v", err)
+		}
+		if len(resolved.AllowedUsers) != 1 || resolved.AllowedUsers[0] != "alice" {
+			t.Errorf("expected AllowedUsers [alice], got %v", resolved.AllowedUsers)
+		}
+		if len(resolved.AllowedGroups) != 1 || resolved.AllowedGroups[0] != "ops" {
+			t.Errorf("expected AllowedGroups [ops], got %v", resolved.AllowedGroups)
+		}
+	})
 }
 
 func TestValidatePayload(t *testing.T) {
