@@ -30,8 +30,8 @@ type TaskDef struct {
 	MaxRetry      *int     `yaml:"max_retry"`
 	RetryDelay    string   `yaml:"retry_delay"`
 	Queue         string   `yaml:"queue"`
-	AllowedGroups []string `yaml:"allowed_groups"`
 	AllowedUsers  []string `yaml:"allowed_users"`
+	AllowedGroups []string `yaml:"allowed_groups"`
 	Input         []Input  `yaml:"input"`
 }
 
@@ -161,8 +161,8 @@ type ResolvedTask struct {
 	MaxRetry      int
 	RetryDelay    time.Duration
 	Queue         string
-	AllowedGroups []string
 	AllowedUsers  []string
+	AllowedGroups []string
 	Input         []Input
 }
 
@@ -231,8 +231,8 @@ func (c *TasksConfig) Resolve(name string) (*ResolvedTask, error) {
 		MaxRetry:      maxRetry,
 		RetryDelay:    retryDelayDur,
 		Queue:         queue,
-		AllowedGroups: task.AllowedGroups,
 		AllowedUsers:  task.AllowedUsers,
+		AllowedGroups: task.AllowedGroups,
 		Input:         task.Input,
 	}, nil
 }

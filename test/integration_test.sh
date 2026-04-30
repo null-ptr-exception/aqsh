@@ -470,7 +470,7 @@ test_allowed_users() {
     # Matching user should be accepted
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
         -H "Content-Type: application/json" \
-        -H "X-Forwarded-User: sa:deploy-bot" \
+        -H "X-Forwarded-User: system:serviceaccount:default:deploy-bot" \
         -d '{"name":"test"}' \
         "$BASE_URL/tasks/user-restricted")
 
@@ -483,7 +483,7 @@ test_allowed_users() {
     # Wrong user should be rejected
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
         -H "Content-Type: application/json" \
-        -H "X-Forwarded-User: sa:other-bot" \
+        -H "X-Forwarded-User: system:serviceaccount:default:other-bot" \
         -d '{"name":"test"}' \
         "$BASE_URL/tasks/user-restricted")
 
@@ -513,7 +513,7 @@ test_allowed_users_or_groups() {
     # Matching user, no matching group — should pass
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
         -H "Content-Type: application/json" \
-        -H "X-Forwarded-User: sa:deploy-bot" \
+        -H "X-Forwarded-User: system:serviceaccount:default:deploy-bot" \
         -H "X-Forwarded-Groups: dev-team" \
         -d '{"name":"test"}' \
         "$BASE_URL/tasks/user-or-group")
@@ -527,7 +527,7 @@ test_allowed_users_or_groups() {
     # Wrong user, matching group — should pass
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
         -H "Content-Type: application/json" \
-        -H "X-Forwarded-User: sa:other-bot" \
+        -H "X-Forwarded-User: system:serviceaccount:default:other-bot" \
         -H "X-Forwarded-Groups: ops-team" \
         -d '{"name":"test"}' \
         "$BASE_URL/tasks/user-or-group")
@@ -541,7 +541,7 @@ test_allowed_users_or_groups() {
     # Neither user nor group match — should be rejected
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
         -H "Content-Type: application/json" \
-        -H "X-Forwarded-User: sa:other-bot" \
+        -H "X-Forwarded-User: system:serviceaccount:default:other-bot" \
         -H "X-Forwarded-Groups: dev-team" \
         -d '{"name":"test"}' \
         "$BASE_URL/tasks/user-or-group")
@@ -555,13 +555,20 @@ test_allowed_users_or_groups() {
 
 # Test: GET /tasks includes allowed_users in listing
 test_list_tasks_allowed_users() {
-    info "Testing GET /tasks includes allowed_users"
+    info "Testing GET /tasks includes allowed_users for user-restricted task"
     RESP=$(curl -s "$BASE_URL/tasks")
 
-    if echo "$RESP" | grep -q '"allowed_users"'; then
-        pass "GET /tasks includes allowed_users field"
+    # Check that user-restricted task has allowed_users with the expected value
+    if echo "$RESP" | grep -q '"user-restricted"'; then
+        pass "GET /tasks contains user-restricted task"
     else
-        fail "GET /tasks includes allowed_users field" "allowed_users in response" "$RESP"
+        fail "GET /tasks contains user-restricted task" "user-restricted in response" "$RESP"
+    fi
+
+    if echo "$RESP" | grep -q 'system:serviceaccount:default:deploy-bot'; then
+        pass "GET /tasks user-restricted has expected allowed_users value"
+    else
+        fail "GET /tasks user-restricted has expected allowed_users value" "system:serviceaccount:default:deploy-bot" "$RESP"
     fi
 }
 

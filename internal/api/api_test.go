@@ -694,6 +694,7 @@ func TestHandleSubmitTaskGroupAuthorization(t *testing.T) {
 		logStream: logs.NewLogStreamer(rdb, time.Hour),
 		client:    asynq.NewClient(asynq.RedisClientOpt{Addr: mr.Addr()}),
 	}
+	defer s.client.Close()
 
 	t.Run("allowed group passes", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/tasks/restricted", strings.NewReader(`{}`))
@@ -788,6 +789,7 @@ func TestHandleSubmitTaskUserAuthorization(t *testing.T) {
 		logStream: logs.NewLogStreamer(rdb, time.Hour),
 		client:    asynq.NewClient(asynq.RedisClientOpt{Addr: mr.Addr()}),
 	}
+	defer s.client.Close()
 
 	t.Run("allowed user passes", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/tasks/sa-only", strings.NewReader(`{}`))

@@ -426,7 +426,7 @@ The proxy sets `X-Forwarded-User` (configurable via `AQSH_IDENTITY_HEADER`) on a
 
 Set `AQSH_REQUIRE_IDENTITY=true` to reject requests without this header (401).
 
-### Group Authorization
+### User and Group Authorization
 
 Tasks can restrict access using `allowed_users` and/or `allowed_groups` in the task config:
 
@@ -445,6 +445,10 @@ tasks:
 - Returns 403 if neither matches.
 
 Tasks without `allowed_users` or `allowed_groups` are open to all users (or all authenticated users when `AQSH_REQUIRE_IDENTITY=true`).
+
+### Trust Boundary
+
+aqsh trusts `X-Forwarded-User` and `X-Forwarded-Groups` headers set by the authenticating reverse proxy. Clients that reach aqsh directly can forge these headers and bypass authorization. Ensure aqsh only accepts traffic from the auth proxy — e.g., via Kubernetes NetworkPolicy, localhost-only binding, or a sidecar proxy.
 
 ---
 

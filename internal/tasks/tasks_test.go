@@ -370,8 +370,11 @@ func TestTasksConfigResolve(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Resolve() error = %v", err)
 		}
-		if len(resolved.AllowedUsers) != 1 || len(resolved.AllowedGroups) != 1 {
-			t.Errorf("expected 1 user and 1 group, got users=%v groups=%v", resolved.AllowedUsers, resolved.AllowedGroups)
+		if len(resolved.AllowedUsers) != 1 || resolved.AllowedUsers[0] != "alice" {
+			t.Errorf("expected AllowedUsers [alice], got %v", resolved.AllowedUsers)
+		}
+		if len(resolved.AllowedGroups) != 1 || resolved.AllowedGroups[0] != "ops" {
+			t.Errorf("expected AllowedGroups [ops], got %v", resolved.AllowedGroups)
 		}
 	})
 }

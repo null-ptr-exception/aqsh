@@ -71,7 +71,7 @@ tasks:
     description: "Task restricted to specific users"
     timeout: 1m
     max_retry: 0
-    allowed_users: ["sa:deploy-bot"]
+    allowed_users: ["system:serviceaccount:default:deploy-bot"]
     input:
       - name: name
         env: NAME
@@ -83,7 +83,7 @@ tasks:
     description: "Task restricted to specific users or groups"
     timeout: 1m
     max_retry: 0
-    allowed_users: ["sa:deploy-bot"]
+    allowed_users: ["system:serviceaccount:default:deploy-bot"]
     allowed_groups: ["ops-team"]
     input:
       - name: name
