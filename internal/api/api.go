@@ -441,8 +441,11 @@ func splitGroups(header string) []string {
 }
 
 func isAllowedUser(identity string, allowedUsers []string) bool {
+	if identity == "" {
+		return false
+	}
 	for _, u := range allowedUsers {
-		if identity == u {
+		if u != "" && identity == u {
 			return true
 		}
 	}

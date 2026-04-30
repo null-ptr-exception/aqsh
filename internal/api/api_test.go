@@ -880,6 +880,7 @@ func TestIsAllowedUser(t *testing.T) {
 		{"match", "alice", []string{"alice", "bob"}, true},
 		{"no match", "charlie", []string{"alice", "bob"}, false},
 		{"empty identity", "", []string{"alice"}, false},
+		{"empty identity empty allowed", "", []string{""}, false},
 		{"empty allowed", "alice", nil, false},
 		{"exact SA match", "system:serviceaccount:rdsma:sertdxkkk", []string{"system:serviceaccount:rdsma:sertdxkkk"}, true},
 	}
