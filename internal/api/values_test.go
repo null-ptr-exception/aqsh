@@ -228,3 +228,56 @@ func TestFetchAllowedValues(t *testing.T) {
 		}
 	})
 }
+
+func TestValuesCache(t *testing.T) {
+	t.Run("cache hit", func(t *testing.T) {
+		c := newValuesCache()
+		values := []AllowedValue{{Name: "a", Value: "1"}}
+		c.set("http://example.com", values, 1*time.Minute)
+
+		got, ok := c.get("http://example.com")
+		if !ok {
+			t.Fatal("expected cache hit")
+		}
+		if len(got) != 1 || got[0].Value != "1" {
+			t.Errorf("unexpected cached value: %v", got)
+		}
+	})
+
+	t.Run("cache miss", func(t *testing.T) {
+		c := newValuesCache()
+		_, ok := c.get("http://example.com")
+		if ok {
+			t.Error("expected cache miss")
+		}
+	})
+
+	t.Run("cache expired", func(t *testing.T) {
+		c := newValuesCache()
+		values := []AllowedValue{{Name: "a", Value: "1"}}
+		c.set("http://example.com", values, 1*time.Millisecond)
+
+		time.Sleep(2 * time.Millisecond)
+
+		_, ok := c.get("http://example.com")
+		if ok {
+			t.Error("expected cache miss after expiry")
+		}
+	})
+
+	t.Run("different keys", func(t *testing.T) {
+		c := newValuesCache()
+		c.set("http://example.com?user=alice", []AllowedValue{{Value: "a"}}, 1*time.Minute)
+		c.set("http://example.com?user=bob", []AllowedValue{{Value: "b"}}, 1*time.Minute)
+
+		alice, _ := c.get("http://example.com?user=alice")
+		bob, _ := c.get("http://example.com?user=bob")
+
+		if alice[0].Value != "a" {
+			t.Errorf("expected alice value 'a', got %q", alice[0].Value)
+		}
+		if bob[0].Value != "b" {
+			t.Errorf("expected bob value 'b', got %q", bob[0].Value)
+		}
+	})
+}

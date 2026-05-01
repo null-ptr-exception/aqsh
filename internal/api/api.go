@@ -23,13 +23,14 @@ import (
 )
 
 type Server struct {
-	cfg       *config.Config
-	tasks     *tasks.TasksConfig
-	client    *asynq.Client
-	inspector *asynq.Inspector
-	logStream *logs.LogStreamer
-	rdb       redis.UniversalClient
-	version   string
+	cfg        *config.Config
+	tasks      *tasks.TasksConfig
+	client     *asynq.Client
+	inspector  *asynq.Inspector
+	logStream  *logs.LogStreamer
+	rdb        redis.UniversalClient
+	version    string
+	valCache   *valuesCache
 }
 
 func New(cfg *config.Config, tasksConfig *tasks.TasksConfig, rdb redis.UniversalClient, asynqOpt asynq.RedisConnOpt, version string) *Server {
@@ -41,6 +42,7 @@ func New(cfg *config.Config, tasksConfig *tasks.TasksConfig, rdb redis.Universal
 		logStream: logs.NewLogStreamer(rdb, cfg.LogRetention),
 		rdb:       rdb,
 		version:   version,
+		valCache:  newValuesCache(),
 	}
 }
 
@@ -179,7 +181,7 @@ func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		fetchURL := substituteURL(input.ValuesURL, identity, groups, taskName)
-		allowed, err := fetchAllowedValues(r.Context(), fetchURL)
+		allowed, err := s.fetchOrCachedValues(r.Context(), fetchURL, input.ValuesCache)
 		if err != nil {
 			if strings.Contains(err.Error(), "timeout") {
 				s.jsonError(w, http.StatusGatewayTimeout, fmt.Sprintf("timeout fetching allowed values for %q", input.Name))
@@ -255,7 +257,7 @@ func (s *Server) handleGetTaskDef(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			fetchURL := substituteURL(input.ValuesURL, identity, groups, taskName)
-			allowed, err := fetchAllowedValues(r.Context(), fetchURL)
+			allowed, err := s.fetchOrCachedValues(r.Context(), fetchURL, input.ValuesCache)
 			if err != nil {
 				continue
 			}
@@ -455,6 +457,26 @@ func (s *Server) jsonResponse(w http.ResponseWriter, status int, data any) {
 
 func (s *Server) jsonError(w http.ResponseWriter, status int, message string) {
 	s.jsonResponse(w, status, map[string]string{"error": message})
+}
+
+func (s *Server) fetchOrCachedValues(ctx context.Context, url string, cacheDuration string) ([]AllowedValue, error) {
+	ttl, _ := time.ParseDuration(cacheDuration)
+	if ttl > 0 && s.valCache != nil {
+		if cached, ok := s.valCache.get(url); ok {
+			return cached, nil
+		}
+	}
+
+	values, err := fetchAllowedValues(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+
+	if ttl > 0 && s.valCache != nil {
+		s.valCache.set(url, values, ttl)
+	}
+
+	return values, nil
 }
 
 func findInput(inputs []tasks.Input, name string) *tasks.Input {

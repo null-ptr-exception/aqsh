@@ -77,6 +77,7 @@ tasks:
         required: true
         type: string
         values_url: "http://mock-values:8090/instances?user=${identity}"
+        values_cache: 30s
 
   user-restricted:
     script: hello.sh

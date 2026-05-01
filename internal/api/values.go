@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -16,6 +17,36 @@ const defaultValuesURLTimeout = 5 * time.Second
 type AllowedValue struct {
 	Name  string
 	Value string
+}
+
+type cacheEntry struct {
+	values    []AllowedValue
+	expiresAt time.Time
+}
+
+type valuesCache struct {
+	mu      sync.RWMutex
+	entries map[string]cacheEntry
+}
+
+func newValuesCache() *valuesCache {
+	return &valuesCache{entries: make(map[string]cacheEntry)}
+}
+
+func (c *valuesCache) get(key string) ([]AllowedValue, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	entry, ok := c.entries[key]
+	if !ok || time.Now().After(entry.expiresAt) {
+		return nil, false
+	}
+	return entry.values, true
+}
+
+func (c *valuesCache) set(key string, values []AllowedValue, ttl time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries[key] = cacheEntry{values: values, expiresAt: time.Now().Add(ttl)}
 }
 
 func substituteURL(template, identity, groups, task string) string {
