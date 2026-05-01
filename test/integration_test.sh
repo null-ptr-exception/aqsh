@@ -624,6 +624,48 @@ test_values_url() {
     fi
 }
 
+# Test: cascading values_url (region -> instance)
+test_cascading_values_url() {
+    # Valid region + valid instance for that region
+    info "Testing cascading: us-east-1 with db-us-001"
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+        -H "Content-Type: application/json" \
+        -d '{"region": "us-east-1", "instance": "db-us-001"}' \
+        "$BASE_URL/tasks/upgrade-db-regional")
+
+    if [ "$HTTP_CODE" = "202" ]; then
+        pass "cascading: us-east-1 + db-us-001 returns 202"
+    else
+        fail "cascading: us-east-1 + db-us-001 returns 202" "202" "$HTTP_CODE"
+    fi
+
+    # Valid region + wrong instance (belongs to different region)
+    info "Testing cascading: us-east-1 with db-eu-001 (wrong region)"
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+        -H "Content-Type: application/json" \
+        -d '{"region": "us-east-1", "instance": "db-eu-001"}' \
+        "$BASE_URL/tasks/upgrade-db-regional")
+
+    if [ "$HTTP_CODE" = "403" ]; then
+        pass "cascading: us-east-1 + db-eu-001 returns 403"
+    else
+        fail "cascading: us-east-1 + db-eu-001 returns 403" "403" "$HTTP_CODE"
+    fi
+
+    # EU region + EU instance works
+    info "Testing cascading: eu-west-1 with db-eu-001"
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+        -H "Content-Type: application/json" \
+        -d '{"region": "eu-west-1", "instance": "db-eu-001"}' \
+        "$BASE_URL/tasks/upgrade-db-regional")
+
+    if [ "$HTTP_CODE" = "202" ]; then
+        pass "cascading: eu-west-1 + db-eu-001 returns 202"
+    else
+        fail "cascading: eu-west-1 + db-eu-001 returns 202" "202" "$HTTP_CODE"
+    fi
+}
+
 # Main
 echo "========================================" >&2
 echo "aqsh Integration Tests" >&2
@@ -653,6 +695,7 @@ test_allowed_users
 test_allowed_users_or_groups
 test_get_task_def_allowed_users
 test_values_url
+test_cascading_values_url
 
 echo "" >&2
 echo "--- Task Execution Tests ---" >&2

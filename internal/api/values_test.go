@@ -12,12 +12,13 @@ import (
 
 func TestSubstituteURL(t *testing.T) {
 	tests := []struct {
-		name     string
-		template string
-		identity string
-		groups   string
-		task     string
-		want     string
+		name        string
+		template    string
+		identity    string
+		groups      string
+		task        string
+		inputValues map[string]string
+		want        string
 	}{
 		{
 			name:     "all variables",
@@ -51,11 +52,37 @@ func TestSubstituteURL(t *testing.T) {
 			task:     "test",
 			want:     "http://authz/values?user=system%3Aserviceaccount%3Adefault%3Adeploy-bot",
 		},
+		{
+			name:        "input variable substitution",
+			template:    "http://authz/instances?region=${input.region}&user=${identity}",
+			identity:    "alice",
+			groups:      "",
+			task:        "upgrade-db",
+			inputValues: map[string]string{"region": "us-east-1"},
+			want:        "http://authz/instances?region=us-east-1&user=alice",
+		},
+		{
+			name:        "input variable with special chars",
+			template:    "http://authz/instances?region=${input.region}",
+			identity:    "",
+			groups:      "",
+			task:        "test",
+			inputValues: map[string]string{"region": "us east/1"},
+			want:        "http://authz/instances?region=us+east%2F1",
+		},
+		{
+			name:     "unresolved input variable preserved",
+			template: "http://authz/instances?region=${input.region}",
+			identity: "",
+			groups:   "",
+			task:     "test",
+			want:     "http://authz/instances?region=${input.region}",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := substituteURL(tt.template, tt.identity, tt.groups, tt.task)
+			got := substituteURL(tt.template, tt.identity, tt.groups, tt.task, tt.inputValues)
 			if got != tt.want {
 				t.Errorf("substituteURL() = %q, want %q", got, tt.want)
 			}
@@ -215,7 +242,7 @@ func TestFetchAllowedValues(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		url := substituteURL(srv.URL+"?user=${identity}&groups=${groups}", "alice", "ops,dev", "test")
+		url := substituteURL(srv.URL+"?user=${identity}&groups=${groups}", "alice", "ops,dev", "test", nil)
 		_, err := fetchAllowedValues(context.Background(), url)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)

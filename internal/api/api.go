@@ -166,8 +166,14 @@ func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate values_url inputs against remote allowed values
+	// Validate values_url inputs against remote allowed values (in order, for cascading)
+	inputValues := make(map[string]string)
 	for _, input := range taskDef.Input {
+		if v, ok := payload[input.Name]; ok && v != nil {
+			if s, ok := v.(string); ok {
+				inputValues[input.Name] = s
+			}
+		}
 		if input.ValuesURL == "" {
 			continue
 		}
@@ -180,7 +186,7 @@ func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 			s.jsonError(w, http.StatusBadRequest, fmt.Sprintf("field %q must be a string for values_url validation", input.Name))
 			return
 		}
-		fetchURL := substituteURL(input.ValuesURL, identity, groups, taskName)
+		fetchURL := substituteURL(input.ValuesURL, identity, groups, taskName, inputValues)
 		allowed, err := s.fetchOrCachedValues(r.Context(), fetchURL, input.ValuesCache)
 		if err != nil {
 			if strings.Contains(err.Error(), "timeout") {
@@ -256,7 +262,10 @@ func (s *Server) handleGetTaskDef(w http.ResponseWriter, r *http.Request) {
 			if input == nil {
 				continue
 			}
-			fetchURL := substituteURL(input.ValuesURL, identity, groups, taskName)
+			fetchURL := substituteURL(input.ValuesURL, identity, groups, taskName, nil)
+			if strings.Contains(fetchURL, "${input.") {
+				continue
+			}
 			allowed, err := s.fetchOrCachedValues(r.Context(), fetchURL, input.ValuesCache)
 			if err != nil {
 				continue

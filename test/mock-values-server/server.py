@@ -7,12 +7,25 @@ ALLOWED_VALUES = {
     "alice": ["db-001"],
 }
 
+INSTANCES_BY_REGION = {
+    "us-east-1": ["db-us-001", "db-us-002"],
+    "eu-west-1": ["db-eu-001"],
+}
+
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        params = parse_qs(urlparse(self.path).query)
-        user = params.get("user", [""])[0]
-        values = ALLOWED_VALUES.get(user, [])
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+        path = parsed.path
+
+        if path == "/instances-by-region":
+            region = params.get("region", [""])[0]
+            values = INSTANCES_BY_REGION.get(region, [])
+        else:
+            user = params.get("user", [""])[0]
+            values = ALLOWED_VALUES.get(user, [])
+
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.end_headers()

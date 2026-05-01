@@ -49,13 +49,16 @@ func (c *valuesCache) set(key string, values []AllowedValue, ttl time.Duration) 
 	c.entries[key] = cacheEntry{values: values, expiresAt: time.Now().Add(ttl)}
 }
 
-func substituteURL(template, identity, groups, task string) string {
-	r := strings.NewReplacer(
+func substituteURL(template, identity, groups, task string, inputValues map[string]string) string {
+	pairs := []string{
 		"${identity}", url.QueryEscape(identity),
 		"${groups}", url.QueryEscape(groups),
 		"${task}", url.QueryEscape(task),
-	)
-	return r.Replace(template)
+	}
+	for k, v := range inputValues {
+		pairs = append(pairs, "${input."+k+"}", url.QueryEscape(v))
+	}
+	return strings.NewReplacer(pairs...).Replace(template)
 }
 
 func fetchAllowedValues(ctx context.Context, rawURL string) ([]AllowedValue, error) {
