@@ -4,40 +4,17 @@
 
 ### GET /tasks - List All Task Definitions
 
+Returns task names and descriptions. Use `GET /tasks/{name}` for full details.
+
 **Response (200 OK):**
 ```json
 {
   "tasks": {
     "deploy": {
-      "description": "Deploy application to environment",
-      "timeout": "10m",
-      "max_retry": 2,
-      "queue": "default",
-      "allowed_groups": ["deploy-team", "platform-team"],
-      "input": [
-        {
-          "name": "version",
-          "env": "VERSION",
-          "required": true,
-          "type": "string",
-          "pattern": "^v?\\d+\\.\\d+\\.\\d+$",
-          "description": "Semantic version to deploy"
-        },
-        {
-          "name": "environment",
-          "env": "ENVIRONMENT",
-          "required": true,
-          "type": "string",
-          "enum": ["dev", "staging", "prod"]
-        },
-        {
-          "name": "dry_run",
-          "env": "DRY_RUN",
-          "required": false,
-          "type": "bool",
-          "default": "false"
-        }
-      ]
+      "description": "Deploy application to environment"
+    },
+    "backup": {
+      "description": "Backup database to S3"
     }
   }
 }
@@ -45,14 +22,14 @@
 
 ### GET /tasks/{name} - Get Task Definition
 
-Returns a single task definition by name. Inputs with `values_url` include `"values_url": true` to indicate dynamic values.
+Returns full task definition including inputs. When identity headers are provided, inputs with `values_url` resolve the remote URL and include the allowed values for that user.
 
-**Response (200 OK):**
+**Response without identity (200 OK):**
 ```json
 {
-  "description": "Deploy application to environment",
+  "description": "Upgrade a database instance",
   "timeout": "10m",
-  "max_retry": 2,
+  "max_retry": 0,
   "queue": "default",
   "input": [
     {
@@ -61,6 +38,29 @@ Returns a single task definition by name. Inputs with `values_url` include `"val
       "required": true,
       "type": "string",
       "values_url": true
+    }
+  ]
+}
+```
+
+**Response with identity header (200 OK):**
+```json
+{
+  "description": "Upgrade a database instance",
+  "timeout": "10m",
+  "max_retry": 0,
+  "queue": "default",
+  "input": [
+    {
+      "name": "instance",
+      "env": "DB_INSTANCE",
+      "required": true,
+      "type": "string",
+      "values_url": true,
+      "values": [
+        {"name": "Production DB 001", "value": "prod-db-001"},
+        {"name": "Production DB 002", "value": "prod-db-002"}
+      ]
     }
   ]
 }

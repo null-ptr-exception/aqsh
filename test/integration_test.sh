@@ -553,22 +553,15 @@ test_allowed_users_or_groups() {
     fi
 }
 
-# Test: GET /tasks includes allowed_users in listing
-test_list_tasks_allowed_users() {
-    info "Testing GET /tasks includes allowed_users for user-restricted task"
-    RESP=$(curl -s "$BASE_URL/tasks")
-
-    # Check that user-restricted task has allowed_users with the expected value
-    if echo "$RESP" | grep -q '"user-restricted"'; then
-        pass "GET /tasks contains user-restricted task"
-    else
-        fail "GET /tasks contains user-restricted task" "user-restricted in response" "$RESP"
-    fi
+# Test: GET /tasks/{name} shows allowed_users
+test_get_task_def_allowed_users() {
+    info "Testing GET /tasks/user-restricted shows allowed_users"
+    RESP=$(curl -s "$BASE_URL/tasks/user-restricted")
 
     if echo "$RESP" | grep -q 'system:serviceaccount:default:deploy-bot'; then
-        pass "GET /tasks user-restricted has expected allowed_users value"
+        pass "GET /tasks/user-restricted has expected allowed_users value"
     else
-        fail "GET /tasks user-restricted has expected allowed_users value" "system:serviceaccount:default:deploy-bot" "$RESP"
+        fail "GET /tasks/user-restricted has expected allowed_users value" "system:serviceaccount:default:deploy-bot" "$RESP"
     fi
 }
 
@@ -658,7 +651,7 @@ echo "" >&2
 echo "--- Authorization Tests ---" >&2
 test_allowed_users
 test_allowed_users_or_groups
-test_list_tasks_allowed_users
+test_get_task_def_allowed_users
 test_values_url
 
 echo "" >&2

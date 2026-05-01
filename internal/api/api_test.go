@@ -177,36 +177,15 @@ func TestHandleListTasks(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer rdb.Close()
 
-	floatPtr := func(f float64) *float64 { return &f }
-	intPtr := func(i int) *int { return &i }
-
 	tasksConfig := &tasks.TasksConfig{
 		Tasks: map[string]tasks.TaskDef{
 			"deploy": {
 				Script:      "deploy.sh",
 				Description: "Deploy the application",
-				Timeout:     "5m",
-				MaxRetry:    intPtr(3),
-				Queue:       "critical",
-				Input: []tasks.Input{
-					{
-						Name:     "env",
-						Env:      "DEPLOY_ENV",
-						Type:     "string",
-						Required: true,
-						Enum:     []string{"staging", "production"},
-					},
-					{
-						Name:        "replicas",
-						Env:         "REPLICAS",
-						Type:        "int",
-						Required:    false,
-						Min:         floatPtr(1),
-						Max:         floatPtr(10),
-						Default:     "3",
-						Description: "Number of replicas",
-					},
-				},
+			},
+			"backup": {
+				Script:      "backup.sh",
+				Description: "Backup database",
 			},
 		},
 	}
@@ -236,50 +215,41 @@ func TestHandleListTasks(t *testing.T) {
 		t.Fatal("expected tasks object in response")
 	}
 
-	deployTask, ok := tasksResp["deploy"].(map[string]any)
-	if !ok {
-		t.Fatal("expected deploy task in response")
+	if len(tasksResp) != 2 {
+		t.Errorf("expected 2 tasks, got %d", len(tasksResp))
 	}
 
+	deployTask := tasksResp["deploy"].(map[string]any)
 	if deployTask["description"] != "Deploy the application" {
 		t.Errorf("expected description='Deploy the application', got %v", deployTask["description"])
 	}
-	if deployTask["queue"] != "critical" {
-		t.Errorf("expected queue='critical', got %v", deployTask["queue"])
-	}
-	if int(deployTask["max_retry"].(float64)) != 3 {
-		t.Errorf("expected max_retry=3, got %v", deployTask["max_retry"])
-	}
 
-	inputs, ok := deployTask["input"].([]any)
-	if !ok || len(inputs) != 2 {
-		t.Fatalf("expected 2 inputs, got %v", deployTask["input"])
+	if _, hasInput := deployTask["input"]; hasInput {
+		t.Error("list response should not include input details")
 	}
-
-	// Check first input (env)
-	envInput := inputs[0].(map[string]any)
-	if envInput["name"] != "env" {
-		t.Errorf("expected input name='env', got %v", envInput["name"])
-	}
-	if envInput["required"] != true {
-		t.Errorf("expected required=true, got %v", envInput["required"])
-	}
-	enum := envInput["enum"].([]any)
-	if len(enum) != 2 {
-		t.Errorf("expected 2 enum values, got %v", enum)
-	}
-
-	// Check second input (replicas)
-	replicasInput := inputs[1].(map[string]any)
-	if replicasInput["default"] != "3" {
-		t.Errorf("expected default='3', got %v", replicasInput["default"])
-	}
-	if replicasInput["description"] != "Number of replicas" {
-		t.Errorf("expected description set, got %v", replicasInput["description"])
+	if _, hasTimeout := deployTask["timeout"]; hasTimeout {
+		t.Error("list response should not include timeout")
 	}
 }
 
 func TestHandleGetTaskDef(t *testing.T) {
+	valueSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user := r.URL.Query().Get("user")
+		switch user {
+		case "alice":
+			json.NewEncoder(w).Encode([]struct {
+				Name  string `json:"name"`
+				Value string `json:"value"`
+			}{
+				{Name: "DB One", Value: "db-001"},
+				{Name: "DB Two", Value: "db-002"},
+			})
+		default:
+			json.NewEncoder(w).Encode([]string{})
+		}
+	}))
+	defer valueSrv.Close()
+
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer rdb.Close()
@@ -292,19 +262,22 @@ func TestHandleGetTaskDef(t *testing.T) {
 				Timeout:     "5m",
 				Input: []tasks.Input{
 					{Name: "env", Env: "ENV", Type: "string", Required: true, Enum: []string{"dev", "prod"}},
-					{Name: "instance", Env: "INSTANCE", Type: "string", ValuesURL: "http://example.com/values"},
+					{Name: "instance", Env: "INSTANCE", Type: "string", ValuesURL: valueSrv.URL + "?user=${identity}"},
 				},
 			},
 		},
 	}
 
 	s := &Server{
-		cfg:   &config.Config{},
+		cfg: &config.Config{
+			IdentityHeader: "X-Forwarded-User",
+			GroupsHeader:   "X-Forwarded-Groups",
+		},
 		tasks: tasksConfig,
 		rdb:   rdb,
 	}
 
-	t.Run("existing task", func(t *testing.T) {
+	t.Run("without identity returns values_url flag only", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/tasks/deploy", nil)
 		req.SetPathValue("name", "deploy")
 		rec := httptest.NewRecorder()
@@ -318,18 +291,45 @@ func TestHandleGetTaskDef(t *testing.T) {
 		var resp map[string]any
 		json.Unmarshal(rec.Body.Bytes(), &resp)
 
-		if resp["description"] != "Deploy the app" {
-			t.Errorf("expected description='Deploy the app', got %v", resp["description"])
-		}
-
 		inputs := resp["input"].([]any)
-		if len(inputs) != 2 {
-			t.Fatalf("expected 2 inputs, got %d", len(inputs))
-		}
-
 		instanceInput := inputs[1].(map[string]any)
 		if instanceInput["values_url"] != true {
 			t.Errorf("expected values_url=true, got %v", instanceInput["values_url"])
+		}
+		if _, hasValues := instanceInput["values"]; hasValues {
+			t.Error("expected no values when no identity provided")
+		}
+	})
+
+	t.Run("with identity resolves values", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/tasks/deploy", nil)
+		req.SetPathValue("name", "deploy")
+		req.Header.Set("X-Forwarded-User", "alice")
+		rec := httptest.NewRecorder()
+
+		s.handleGetTaskDef(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("expected status %d, got %d", http.StatusOK, rec.Code)
+		}
+
+		var resp map[string]any
+		json.Unmarshal(rec.Body.Bytes(), &resp)
+
+		inputs := resp["input"].([]any)
+		instanceInput := inputs[1].(map[string]any)
+
+		values, ok := instanceInput["values"].([]any)
+		if !ok {
+			t.Fatalf("expected values array, got %v", instanceInput["values"])
+		}
+		if len(values) != 2 {
+			t.Fatalf("expected 2 values, got %d", len(values))
+		}
+
+		first := values[0].(map[string]any)
+		if first["name"] != "DB One" || first["value"] != "db-001" {
+			t.Errorf("expected first value {DB One, db-001}, got %v", first)
 		}
 	})
 
@@ -1163,46 +1163,6 @@ func TestHandleSubmitTaskValuesURLError(t *testing.T) {
 			t.Errorf("expected status %d, got %d: %s", http.StatusBadGateway, rec.Code, rec.Body.String())
 		}
 	})
-}
-
-func TestHandleListTasksValuesURL(t *testing.T) {
-	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer rdb.Close()
-
-	tasksConfig := &tasks.TasksConfig{
-		Tasks: map[string]tasks.TaskDef{
-			"upgrade-db": {
-				Script:      "upgrade.sh",
-				Description: "Upgrade DB",
-				Input: []tasks.Input{
-					{Name: "instance", Env: "INSTANCE", Type: "string", ValuesURL: "http://example.com/values"},
-				},
-			},
-		},
-	}
-
-	s := &Server{
-		cfg:   &config.Config{},
-		tasks: tasksConfig,
-		rdb:   rdb,
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/tasks", nil)
-	rec := httptest.NewRecorder()
-
-	s.handleListTasks(rec, req)
-
-	var resp map[string]any
-	json.Unmarshal(rec.Body.Bytes(), &resp)
-
-	task := resp["tasks"].(map[string]any)["upgrade-db"].(map[string]any)
-	inputs := task["input"].([]any)
-	input := inputs[0].(map[string]any)
-
-	if input["values_url"] != true {
-		t.Errorf("expected values_url=true in list response, got %v", input["values_url"])
-	}
 }
 
 func TestHandleGetLogs(t *testing.T) {

@@ -239,7 +239,35 @@ func (s *Server) handleGetTaskDef(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.jsonResponse(w, http.StatusOK, serializeTaskDef(taskDef))
+	result := serializeTaskDef(taskDef)
+
+	identity := r.Header.Get(s.cfg.IdentityHeader)
+	groups := r.Header.Get(s.cfg.GroupsHeader)
+	if identity != "" {
+		inputs := result["input"].([]map[string]any)
+		for _, m := range inputs {
+			valuesURL, ok := m["values_url"]
+			if !ok || valuesURL != true {
+				continue
+			}
+			input := findInput(taskDef.Input, m["name"].(string))
+			if input == nil {
+				continue
+			}
+			fetchURL := substituteURL(input.ValuesURL, identity, groups, taskName)
+			allowed, err := fetchAllowedValues(r.Context(), fetchURL)
+			if err != nil {
+				continue
+			}
+			values := make([]map[string]string, len(allowed))
+			for i, av := range allowed {
+				values[i] = map[string]string{"name": av.Name, "value": av.Value}
+			}
+			m["values"] = values
+		}
+	}
+
+	s.jsonResponse(w, http.StatusOK, result)
 }
 
 func (s *Server) handleGetExecution(w http.ResponseWriter, r *http.Request) {
@@ -376,7 +404,9 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 	result := make(map[string]any)
 	for name := range s.tasks.Tasks {
 		taskDef, _ := s.tasks.Resolve(name)
-		result[name] = serializeTaskDef(taskDef)
+		result[name] = map[string]any{
+			"description": taskDef.Description,
+		}
 	}
 
 	s.jsonResponse(w, http.StatusOK, map[string]any{"tasks": result})
@@ -425,6 +455,15 @@ func (s *Server) jsonResponse(w http.ResponseWriter, status int, data any) {
 
 func (s *Server) jsonError(w http.ResponseWriter, status int, message string) {
 	s.jsonResponse(w, status, map[string]string{"error": message})
+}
+
+func findInput(inputs []tasks.Input, name string) *tasks.Input {
+	for i := range inputs {
+		if inputs[i].Name == name {
+			return &inputs[i]
+		}
+	}
+	return nil
 }
 
 func splitGroups(header string) []string {
