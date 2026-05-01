@@ -224,85 +224,85 @@ test_submit_unknown_task() {
     fi
 }
 
-# Test: GET /tasks/{id} - success result
+# Test: GET /executions/{id} - success result
 test_get_task_success() {
     local TASK_ID=$1
-    info "Testing GET /tasks/$TASK_ID (completed task)"
+    info "Testing GET /executions/$TASK_ID (completed task)"
 
     # Wait for task to complete
     sleep 5
 
-    RESP=$(curl -s "$BASE_URL/tasks/$TASK_ID")
+    RESP=$(curl -s "$BASE_URL/executions/$TASK_ID")
 
     if echo "$RESP" | grep -q '"status":"completed"'; then
-        pass "GET /tasks/$TASK_ID shows status=completed"
+        pass "GET /executions/$TASK_ID shows status=completed"
     else
-        fail "GET /tasks/$TASK_ID shows status=completed" "completed" "$RESP"
+        fail "GET /executions/$TASK_ID shows status=completed" "completed" "$RESP"
     fi
 
     if echo "$RESP" | grep -q '"exit_code":0'; then
-        pass "GET /tasks/$TASK_ID shows exit_code=0"
+        pass "GET /executions/$TASK_ID shows exit_code=0"
     else
-        fail "GET /tasks/$TASK_ID shows exit_code=0" "exit_code:0" "$RESP"
+        fail "GET /executions/$TASK_ID shows exit_code=0" "exit_code:0" "$RESP"
     fi
 
     # Check for created_at and started_at timestamps
     if echo "$RESP" | grep -q '"created_at"'; then
-        pass "GET /tasks/$TASK_ID shows created_at"
+        pass "GET /executions/$TASK_ID shows created_at"
     else
-        fail "GET /tasks/$TASK_ID shows created_at" '"created_at":"..."' "$RESP"
+        fail "GET /executions/$TASK_ID shows created_at" '"created_at":"..."' "$RESP"
     fi
 
     if echo "$RESP" | grep -q '"started_at"'; then
-        pass "GET /tasks/$TASK_ID shows started_at"
+        pass "GET /executions/$TASK_ID shows started_at"
     else
-        fail "GET /tasks/$TASK_ID shows started_at" '"started_at":"..."' "$RESP"
+        fail "GET /executions/$TASK_ID shows started_at" '"started_at":"..."' "$RESP"
     fi
 
     # Check for result data from AQSH_RESULT_FILE (stored as string)
     if echo "$RESP" | grep -q '"data":"'; then
-        pass "GET /tasks/$TASK_ID result contains data string"
+        pass "GET /executions/$TASK_ID result contains data string"
     else
-        fail "GET /tasks/$TASK_ID result contains data string" '"data":"..."' "$RESP"
+        fail "GET /executions/$TASK_ID result contains data string" '"data":"..."' "$RESP"
     fi
 
     # The data string should contain the greeted field (escaped JSON)
     if echo "$RESP" | grep -q 'greeted'; then
-        pass "GET /tasks/$TASK_ID result data contains greeted field"
+        pass "GET /executions/$TASK_ID result data contains greeted field"
     else
-        fail "GET /tasks/$TASK_ID result data contains greeted field" 'greeted' "$RESP"
+        fail "GET /executions/$TASK_ID result data contains greeted field" 'greeted' "$RESP"
     fi
 }
 
-# Test: GET /tasks/{id} - not found
+# Test: GET /executions/{id} - not found
 test_get_task_not_found() {
-    info "Testing GET /tasks/nonexistent-id (not found)"
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/tasks/nonexistent-id")
+    info "Testing GET /executions/nonexistent-id (not found)"
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/executions/nonexistent-id")
 
     if [ "$HTTP_CODE" = "404" ]; then
-        pass "GET /tasks/nonexistent-id returns 404"
+        pass "GET /executions/nonexistent-id returns 404"
     else
-        fail "GET /tasks/nonexistent-id returns 404" "404" "$HTTP_CODE"
+        fail "GET /executions/nonexistent-id returns 404" "404" "$HTTP_CODE"
     fi
 }
 
-# Test: GET /tasks/{id}/logs - log streaming
+# Test: GET /executions/{id}/logs - log streaming
 test_get_task_logs() {
     local TASK_ID=$1
-    info "Testing GET /tasks/$TASK_ID/logs (log streaming)"
+    info "Testing GET /executions/$TASK_ID/logs (log streaming)"
 
-    RESP=$(curl -s "$BASE_URL/tasks/$TASK_ID/logs")
+    RESP=$(curl -s "$BASE_URL/executions/$TASK_ID/logs")
 
     if echo "$RESP" | grep -q 'Hello, IntegrationTest'; then
-        pass "GET /tasks/$TASK_ID/logs contains output"
+        pass "GET /executions/$TASK_ID/logs contains output"
     else
-        fail "GET /tasks/$TASK_ID/logs contains output" "Hello, IntegrationTest" "$RESP"
+        fail "GET /executions/$TASK_ID/logs contains output" "Hello, IntegrationTest" "$RESP"
     fi
 
     if echo "$RESP" | grep -q 'event: eof'; then
-        pass "GET /tasks/$TASK_ID/logs ends with EOF event"
+        pass "GET /executions/$TASK_ID/logs ends with EOF event"
     else
-        fail "GET /tasks/$TASK_ID/logs ends with EOF event" "event: eof" "$RESP"
+        fail "GET /executions/$TASK_ID/logs ends with EOF event" "event: eof" "$RESP"
     fi
 }
 
@@ -327,7 +327,7 @@ test_realtime_log_streaming() {
     sleep 1  # Give task a moment to start
 
     # Stream logs for 3 seconds while task is still running
-    LOGS=$(timeout 3 curl -s -N "$BASE_URL/tasks/$TASK_ID/logs" 2>/dev/null || true)
+    LOGS=$(timeout 3 curl -s -N "$BASE_URL/executions/$TASK_ID/logs" 2>/dev/null || true)
 
     # Check that we got some intermediate output (not just EOF)
     if echo "$LOGS" | grep -q 'Step 1 of 5'; then
@@ -340,7 +340,7 @@ test_realtime_log_streaming() {
     sleep 5
 
     # Now get complete logs
-    LOGS=$(curl -s "$BASE_URL/tasks/$TASK_ID/logs")
+    LOGS=$(curl -s "$BASE_URL/executions/$TASK_ID/logs")
 
     if echo "$LOGS" | grep -q 'Step 5 of 5'; then
         pass "Complete logs contain final step"
@@ -374,7 +374,7 @@ test_deploy_task() {
 
         # Wait and check result
         sleep 5
-        RESP=$(curl -s "$BASE_URL/tasks/$TASK_ID")
+        RESP=$(curl -s "$BASE_URL/executions/$TASK_ID")
 
         if echo "$RESP" | grep -q '"status":"completed"'; then
             pass "Deploy task completed successfully"
@@ -412,7 +412,7 @@ test_deploy_task_dry_run() {
 
         # Wait and check result
         sleep 3
-        RESP=$(curl -s "$BASE_URL/tasks/$TASK_ID")
+        RESP=$(curl -s "$BASE_URL/executions/$TASK_ID")
 
         if echo "$RESP" | grep -q '"status":"completed"'; then
             pass "Deploy dry_run task completed successfully"
@@ -444,7 +444,7 @@ test_task_no_result_file() {
 
         # Wait for task to complete
         sleep 7
-        RESP=$(curl -s "$BASE_URL/tasks/$TASK_ID")
+        RESP=$(curl -s "$BASE_URL/executions/$TASK_ID")
 
         if echo "$RESP" | grep -q '"status":"completed"'; then
             pass "Slow task completed successfully"
@@ -572,6 +572,65 @@ test_list_tasks_allowed_users() {
     fi
 }
 
+# Test: values_url authorization
+test_values_url() {
+    # Allowed user submits allowed value
+    info "Testing values_url: allowed user with allowed value"
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+        -H "Content-Type: application/json" \
+        -H "X-Forwarded-User: system:serviceaccount:default:deploy-bot" \
+        -d '{"instance": "db-001"}' \
+        "$BASE_URL/tasks/upgrade-db")
+
+    if [ "$HTTP_CODE" = "202" ]; then
+        pass "values_url: allowed user with allowed value returns 202"
+    else
+        fail "values_url: allowed user with allowed value returns 202" "202" "$HTTP_CODE"
+    fi
+
+    # Allowed user submits disallowed value
+    info "Testing values_url: allowed user with disallowed value"
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+        -H "Content-Type: application/json" \
+        -H "X-Forwarded-User: alice" \
+        -d '{"instance": "db-002"}' \
+        "$BASE_URL/tasks/upgrade-db")
+
+    if [ "$HTTP_CODE" = "403" ]; then
+        pass "values_url: allowed user with disallowed value returns 403"
+    else
+        fail "values_url: allowed user with disallowed value returns 403" "403" "$HTTP_CODE"
+    fi
+
+    # Allowed user submits their allowed value
+    info "Testing values_url: alice with her allowed value"
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+        -H "Content-Type: application/json" \
+        -H "X-Forwarded-User: alice" \
+        -d '{"instance": "db-001"}' \
+        "$BASE_URL/tasks/upgrade-db")
+
+    if [ "$HTTP_CODE" = "202" ]; then
+        pass "values_url: alice with her allowed value returns 202"
+    else
+        fail "values_url: alice with her allowed value returns 202" "202" "$HTTP_CODE"
+    fi
+
+    # Unknown user gets empty list, any value rejected
+    info "Testing values_url: unknown user rejected"
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+        -H "Content-Type: application/json" \
+        -H "X-Forwarded-User: unknown-user" \
+        -d '{"instance": "db-001"}' \
+        "$BASE_URL/tasks/upgrade-db")
+
+    if [ "$HTTP_CODE" = "403" ]; then
+        pass "values_url: unknown user returns 403"
+    else
+        fail "values_url: unknown user returns 403" "403" "$HTTP_CODE"
+    fi
+}
+
 # Main
 echo "========================================" >&2
 echo "aqsh Integration Tests" >&2
@@ -600,6 +659,7 @@ echo "--- Authorization Tests ---" >&2
 test_allowed_users
 test_allowed_users_or_groups
 test_list_tasks_allowed_users
+test_values_url
 
 echo "" >&2
 echo "--- Task Execution Tests ---" >&2

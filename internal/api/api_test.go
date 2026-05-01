@@ -279,6 +279,73 @@ func TestHandleListTasks(t *testing.T) {
 	}
 }
 
+func TestHandleGetTaskDef(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	tasksConfig := &tasks.TasksConfig{
+		Tasks: map[string]tasks.TaskDef{
+			"deploy": {
+				Script:      "deploy.sh",
+				Description: "Deploy the app",
+				Timeout:     "5m",
+				Input: []tasks.Input{
+					{Name: "env", Env: "ENV", Type: "string", Required: true, Enum: []string{"dev", "prod"}},
+					{Name: "instance", Env: "INSTANCE", Type: "string", ValuesURL: "http://example.com/values"},
+				},
+			},
+		},
+	}
+
+	s := &Server{
+		cfg:   &config.Config{},
+		tasks: tasksConfig,
+		rdb:   rdb,
+	}
+
+	t.Run("existing task", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/tasks/deploy", nil)
+		req.SetPathValue("name", "deploy")
+		rec := httptest.NewRecorder()
+
+		s.handleGetTaskDef(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("expected status %d, got %d", http.StatusOK, rec.Code)
+		}
+
+		var resp map[string]any
+		json.Unmarshal(rec.Body.Bytes(), &resp)
+
+		if resp["description"] != "Deploy the app" {
+			t.Errorf("expected description='Deploy the app', got %v", resp["description"])
+		}
+
+		inputs := resp["input"].([]any)
+		if len(inputs) != 2 {
+			t.Fatalf("expected 2 inputs, got %d", len(inputs))
+		}
+
+		instanceInput := inputs[1].(map[string]any)
+		if instanceInput["values_url"] != true {
+			t.Errorf("expected values_url=true, got %v", instanceInput["values_url"])
+		}
+	})
+
+	t.Run("unknown task", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/tasks/nonexistent", nil)
+		req.SetPathValue("name", "nonexistent")
+		rec := httptest.NewRecorder()
+
+		s.handleGetTaskDef(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("expected status %d, got %d", http.StatusNotFound, rec.Code)
+		}
+	})
+}
+
 func TestHandleSubmitTaskNotFound(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -396,7 +463,7 @@ func TestHandleSubmitTaskValidationError(t *testing.T) {
 	}
 }
 
-func TestHandleGetTaskNotFound(t *testing.T) {
+func TestHandleGetExecutionNotFound(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer rdb.Close()
@@ -415,7 +482,7 @@ func TestHandleGetTaskNotFound(t *testing.T) {
 	req.SetPathValue("id", "nonexistent-id")
 	rec := httptest.NewRecorder()
 
-	s.handleGetTask(rec, req)
+	s.handleGetExecution(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected status %d, got %d", http.StatusNotFound, rec.Code)
@@ -557,7 +624,7 @@ func TestHandleSubmitTaskIdentityOptional(t *testing.T) {
 	}
 }
 
-func TestHandleGetTaskIdentity(t *testing.T) {
+func TestHandleGetExecutionIdentity(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer rdb.Close()
@@ -597,7 +664,7 @@ func TestHandleGetTaskIdentity(t *testing.T) {
 	req.SetPathValue("id", info.ID)
 	rec := httptest.NewRecorder()
 
-	s.handleGetTask(rec, req)
+	s.handleGetExecution(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
@@ -613,7 +680,7 @@ func TestHandleGetTaskIdentity(t *testing.T) {
 	}
 }
 
-func TestHandleGetTaskNoIdentity(t *testing.T) {
+func TestHandleGetExecutionNoIdentity(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer rdb.Close()
@@ -651,7 +718,7 @@ func TestHandleGetTaskNoIdentity(t *testing.T) {
 	req.SetPathValue("id", info.ID)
 	rec := httptest.NewRecorder()
 
-	s.handleGetTask(rec, req)
+	s.handleGetExecution(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())

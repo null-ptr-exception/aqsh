@@ -103,9 +103,10 @@ func (s *Server) Run(ctx context.Context) error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /tasks/{name}", s.handleSubmitTask)
-	mux.HandleFunc("GET /tasks/{id}", s.handleGetTask)
-	mux.HandleFunc("GET /tasks/{id}/logs", s.handleGetLogs)
+	mux.HandleFunc("GET /tasks/{name}", s.handleGetTaskDef)
 	mux.HandleFunc("GET /tasks", s.handleListTasks)
+	mux.HandleFunc("GET /executions/{id}", s.handleGetExecution)
+	mux.HandleFunc("GET /executions/{id}/logs", s.handleGetLogs)
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.Handle("GET /metrics", promhttp.Handler())
 
@@ -229,7 +230,19 @@ func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleGetTaskDef(w http.ResponseWriter, r *http.Request) {
+	taskName := r.PathValue("name")
+
+	taskDef, err := s.tasks.Resolve(taskName)
+	if err != nil {
+		s.jsonError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, serializeTaskDef(taskDef))
+}
+
+func (s *Server) handleGetExecution(w http.ResponseWriter, r *http.Request) {
 	taskID := r.PathValue("id")
 
 	// Try all queues the worker is configured to process
@@ -363,52 +376,7 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 	result := make(map[string]any)
 	for name := range s.tasks.Tasks {
 		taskDef, _ := s.tasks.Resolve(name)
-		inputs := make([]map[string]any, 0, len(taskDef.Input))
-		for _, input := range taskDef.Input {
-			m := map[string]any{
-				"name":     input.Name,
-				"env":      input.Env,
-				"required": input.Required,
-				"type":     input.Type,
-			}
-			if input.Pattern != "" {
-				m["pattern"] = input.Pattern
-			}
-			if len(input.Enum) > 0 {
-				m["enum"] = input.Enum
-			}
-			if input.Min != nil {
-				m["min"] = *input.Min
-			}
-			if input.Max != nil {
-				m["max"] = *input.Max
-			}
-			if input.Default != "" {
-				m["default"] = input.Default
-			}
-			if input.Description != "" {
-				m["description"] = input.Description
-			}
-			if input.ValuesURL != "" {
-				m["values_url"] = true
-			}
-			inputs = append(inputs, m)
-		}
-
-		taskInfo := map[string]any{
-			"description": taskDef.Description,
-			"timeout":     taskDef.Timeout.String(),
-			"max_retry":   taskDef.MaxRetry,
-			"queue":       taskDef.Queue,
-			"input":       inputs,
-		}
-		if len(taskDef.AllowedGroups) > 0 {
-			taskInfo["allowed_groups"] = taskDef.AllowedGroups
-		}
-		if len(taskDef.AllowedUsers) > 0 {
-			taskInfo["allowed_users"] = taskDef.AllowedUsers
-		}
-		result[name] = taskInfo
+		result[name] = serializeTaskDef(taskDef)
 	}
 
 	s.jsonResponse(w, http.StatusOK, map[string]any{"tasks": result})
@@ -494,6 +462,55 @@ func hasAnyGroup(userGroups, allowedGroups []string) bool {
 		}
 	}
 	return false
+}
+
+func serializeTaskDef(taskDef *tasks.ResolvedTask) map[string]any {
+	inputs := make([]map[string]any, 0, len(taskDef.Input))
+	for _, input := range taskDef.Input {
+		m := map[string]any{
+			"name":     input.Name,
+			"env":      input.Env,
+			"required": input.Required,
+			"type":     input.Type,
+		}
+		if input.Pattern != "" {
+			m["pattern"] = input.Pattern
+		}
+		if len(input.Enum) > 0 {
+			m["enum"] = input.Enum
+		}
+		if input.Min != nil {
+			m["min"] = *input.Min
+		}
+		if input.Max != nil {
+			m["max"] = *input.Max
+		}
+		if input.Default != "" {
+			m["default"] = input.Default
+		}
+		if input.Description != "" {
+			m["description"] = input.Description
+		}
+		if input.ValuesURL != "" {
+			m["values_url"] = true
+		}
+		inputs = append(inputs, m)
+	}
+
+	info := map[string]any{
+		"description": taskDef.Description,
+		"timeout":     taskDef.Timeout.String(),
+		"max_retry":   taskDef.MaxRetry,
+		"queue":       taskDef.Queue,
+		"input":       inputs,
+	}
+	if len(taskDef.AllowedGroups) > 0 {
+		info["allowed_groups"] = taskDef.AllowedGroups
+	}
+	if len(taskDef.AllowedUsers) > 0 {
+		info["allowed_users"] = taskDef.AllowedUsers
+	}
+	return info
 }
 
 func stateToStatus(state asynq.TaskState) string {

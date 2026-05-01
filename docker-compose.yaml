@@ -13,6 +13,12 @@ services:
     depends_on:
       - redis
 
+  mock-values:
+    image: python:3-alpine
+    command: python /scripts/server.py
+    volumes:
+      - ./test/mock-values-server:/scripts:ro
+
   dev:
     build:
       context: .
@@ -20,6 +26,7 @@ services:
     environment:
       AQSH_REDIS_ADDR: redis:6379
       AQSH_URL: http://aqsh:8080
+      MOCK_VALUES_URL: http://mock-values:8090
       DEV_CONTAINER: "true"
     volumes:
       - .:/app
@@ -27,5 +34,6 @@ services:
     depends_on:
       - redis
       - aqsh
+      - mock-values
     profiles:
       - dev
