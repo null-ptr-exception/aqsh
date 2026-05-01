@@ -950,6 +950,194 @@ func TestHasAnyGroup(t *testing.T) {
 	}
 }
 
+func TestHandleSubmitTaskValuesURL(t *testing.T) {
+	valueSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user := r.URL.Query().Get("user")
+		switch user {
+		case "alice":
+			json.NewEncoder(w).Encode([]string{"db-001", "db-002"})
+		case "bob":
+			json.NewEncoder(w).Encode([]string{"db-003"})
+		default:
+			json.NewEncoder(w).Encode([]string{})
+		}
+	}))
+	defer valueSrv.Close()
+
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	tasksConfig := &tasks.TasksConfig{
+		Tasks: map[string]tasks.TaskDef{
+			"upgrade-db": {
+				Script: "upgrade.sh",
+				Input: []tasks.Input{
+					{
+						Name:      "instance",
+						Env:       "DB_INSTANCE",
+						Required:  true,
+						Type:      "string",
+						ValuesURL: valueSrv.URL + "?user=${identity}",
+					},
+				},
+			},
+		},
+	}
+
+	s := &Server{
+		cfg: &config.Config{
+			IdentityHeader: "X-Forwarded-User",
+			GroupsHeader:   "X-Forwarded-Groups",
+		},
+		tasks:     tasksConfig,
+		rdb:       rdb,
+		logStream: logs.NewLogStreamer(rdb, time.Hour),
+		client:    asynq.NewClient(asynq.RedisClientOpt{Addr: mr.Addr()}),
+	}
+	defer s.client.Close()
+
+	t.Run("allowed value passes", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/tasks/upgrade-db",
+			strings.NewReader(`{"instance": "db-001"}`))
+		req.SetPathValue("name", "upgrade-db")
+		req.Header.Set("X-Forwarded-User", "alice")
+		rec := httptest.NewRecorder()
+
+		s.handleSubmitTask(rec, req)
+
+		if rec.Code != http.StatusAccepted {
+			t.Errorf("expected status %d, got %d: %s", http.StatusAccepted, rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("disallowed value returns 403", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/tasks/upgrade-db",
+			strings.NewReader(`{"instance": "db-003"}`))
+		req.SetPathValue("name", "upgrade-db")
+		req.Header.Set("X-Forwarded-User", "alice")
+		rec := httptest.NewRecorder()
+
+		s.handleSubmitTask(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("expected status %d, got %d: %s", http.StatusForbidden, rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("different user sees different values", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/tasks/upgrade-db",
+			strings.NewReader(`{"instance": "db-003"}`))
+		req.SetPathValue("name", "upgrade-db")
+		req.Header.Set("X-Forwarded-User", "bob")
+		rec := httptest.NewRecorder()
+
+		s.handleSubmitTask(rec, req)
+
+		if rec.Code != http.StatusAccepted {
+			t.Errorf("expected status %d, got %d: %s", http.StatusAccepted, rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("unknown user gets empty list returns 403", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/tasks/upgrade-db",
+			strings.NewReader(`{"instance": "db-001"}`))
+		req.SetPathValue("name", "upgrade-db")
+		req.Header.Set("X-Forwarded-User", "unknown")
+		rec := httptest.NewRecorder()
+
+		s.handleSubmitTask(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("expected status %d, got %d: %s", http.StatusForbidden, rec.Code, rec.Body.String())
+		}
+	})
+}
+
+func TestHandleSubmitTaskValuesURLError(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	t.Run("remote server error returns 502", func(t *testing.T) {
+		errSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer errSrv.Close()
+
+		tasksConfig := &tasks.TasksConfig{
+			Tasks: map[string]tasks.TaskDef{
+				"test": {
+					Script: "test.sh",
+					Input: []tasks.Input{
+						{Name: "val", Env: "VAL", Type: "string", ValuesURL: errSrv.URL},
+					},
+				},
+			},
+		}
+
+		s := &Server{
+			cfg:       &config.Config{IdentityHeader: "X-Forwarded-User"},
+			tasks:     tasksConfig,
+			rdb:       rdb,
+			logStream: logs.NewLogStreamer(rdb, time.Hour),
+			client:    asynq.NewClient(asynq.RedisClientOpt{Addr: mr.Addr()}),
+		}
+		defer s.client.Close()
+
+		req := httptest.NewRequest(http.MethodPost, "/tasks/test",
+			strings.NewReader(`{"val": "x"}`))
+		req.SetPathValue("name", "test")
+		rec := httptest.NewRecorder()
+
+		s.handleSubmitTask(rec, req)
+
+		if rec.Code != http.StatusBadGateway {
+			t.Errorf("expected status %d, got %d: %s", http.StatusBadGateway, rec.Code, rec.Body.String())
+		}
+	})
+}
+
+func TestHandleListTasksValuesURL(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	tasksConfig := &tasks.TasksConfig{
+		Tasks: map[string]tasks.TaskDef{
+			"upgrade-db": {
+				Script:      "upgrade.sh",
+				Description: "Upgrade DB",
+				Input: []tasks.Input{
+					{Name: "instance", Env: "INSTANCE", Type: "string", ValuesURL: "http://example.com/values"},
+				},
+			},
+		},
+	}
+
+	s := &Server{
+		cfg:   &config.Config{},
+		tasks: tasksConfig,
+		rdb:   rdb,
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks", nil)
+	rec := httptest.NewRecorder()
+
+	s.handleListTasks(rec, req)
+
+	var resp map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+
+	task := resp["tasks"].(map[string]any)["upgrade-db"].(map[string]any)
+	inputs := task["input"].([]any)
+	input := inputs[0].(map[string]any)
+
+	if input["values_url"] != true {
+		t.Errorf("expected values_url=true in list response, got %v", input["values_url"])
+	}
+}
+
 func TestHandleGetLogs(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})

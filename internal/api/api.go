@@ -163,6 +163,36 @@ func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate values_url inputs against remote allowed values
+	for _, input := range taskDef.Input {
+		if input.ValuesURL == "" {
+			continue
+		}
+		submitted, ok := payload[input.Name]
+		if !ok || submitted == nil {
+			continue
+		}
+		submittedStr, ok := submitted.(string)
+		if !ok {
+			s.jsonError(w, http.StatusBadRequest, fmt.Sprintf("field %q must be a string for values_url validation", input.Name))
+			return
+		}
+		fetchURL := substituteURL(input.ValuesURL, identity, groups, taskName)
+		allowed, err := fetchAllowedValues(r.Context(), fetchURL)
+		if err != nil {
+			if strings.Contains(err.Error(), "timeout") {
+				s.jsonError(w, http.StatusGatewayTimeout, fmt.Sprintf("timeout fetching allowed values for %q", input.Name))
+			} else {
+				s.jsonError(w, http.StatusBadGateway, fmt.Sprintf("error fetching allowed values for %q: %s", input.Name, err.Error()))
+			}
+			return
+		}
+		if !isValueAllowed(submittedStr, allowed) {
+			s.jsonError(w, http.StatusForbidden, fmt.Sprintf("value %q is not allowed for field %q", submittedStr, input.Name))
+			return
+		}
+	}
+
 	env, err := s.tasks.ValidatePayload(taskName, payload)
 	if err != nil {
 		s.jsonError(w, http.StatusBadRequest, err.Error())
@@ -358,6 +388,9 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 			}
 			if input.Description != "" {
 				m["description"] = input.Description
+			}
+			if input.ValuesURL != "" {
+				m["values_url"] = true
 			}
 			inputs = append(inputs, m)
 		}
