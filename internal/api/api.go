@@ -187,6 +187,10 @@ func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		fetchURL := substituteURL(input.ValuesURL, identity, groups, taskName, inputValues)
+		if strings.Contains(fetchURL, "${input.") {
+			s.jsonError(w, http.StatusBadRequest, fmt.Sprintf("field %q depends on an unresolved input parameter", input.Name))
+			return
+		}
 		allowed, err := s.fetchOrCachedValues(r.Context(), fetchURL, input.ValuesCache)
 		if err != nil {
 			if strings.Contains(err.Error(), "timeout") {
@@ -251,7 +255,7 @@ func (s *Server) handleGetTaskDef(w http.ResponseWriter, r *http.Request) {
 
 	identity := r.Header.Get(s.cfg.IdentityHeader)
 	groups := r.Header.Get(s.cfg.GroupsHeader)
-	if identity != "" {
+	if identity != "" || groups != "" {
 		inputs := result["input"].([]map[string]any)
 		for _, m := range inputs {
 			valuesURL, ok := m["values_url"]
@@ -268,6 +272,8 @@ func (s *Server) handleGetTaskDef(w http.ResponseWriter, r *http.Request) {
 			}
 			allowed, err := s.fetchOrCachedValues(r.Context(), fetchURL, input.ValuesCache)
 			if err != nil {
+				slog.Warn("failed to resolve values_url", "task", taskName, "input", input.Name, "error", err)
+				m["values_error"] = err.Error()
 				continue
 			}
 			values := make([]map[string]string, len(allowed))

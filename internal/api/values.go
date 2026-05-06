@@ -34,10 +34,14 @@ func newValuesCache() *valuesCache {
 }
 
 func (c *valuesCache) get(key string) ([]AllowedValue, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	entry, ok := c.entries[key]
-	if !ok || time.Now().After(entry.expiresAt) {
+	if !ok {
+		return nil, false
+	}
+	if time.Now().After(entry.expiresAt) {
+		delete(c.entries, key)
 		return nil, false
 	}
 	return entry.values, true

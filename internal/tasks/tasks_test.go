@@ -535,7 +535,9 @@ tasks:
 `
 		tmpDir := t.TempDir()
 		tmpFile := filepath.Join(tmpDir, "tasks.yaml")
-		os.WriteFile(tmpFile, []byte(content), 0644)
+		if err := os.WriteFile(tmpFile, []byte(content), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
 
 		cfg, err := Load(tmpFile)
 		if err != nil {
@@ -558,7 +560,9 @@ tasks:
 `
 		tmpDir := t.TempDir()
 		tmpFile := filepath.Join(tmpDir, "tasks.yaml")
-		os.WriteFile(tmpFile, []byte(content), 0644)
+		if err := os.WriteFile(tmpFile, []byte(content), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
 
 		_, err := Load(tmpFile)
 		if err == nil {
@@ -579,7 +583,9 @@ tasks:
 `
 		tmpDir := t.TempDir()
 		tmpFile := filepath.Join(tmpDir, "tasks.yaml")
-		os.WriteFile(tmpFile, []byte(content), 0644)
+		if err := os.WriteFile(tmpFile, []byte(content), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
 
 		_, err := Load(tmpFile)
 		if err == nil {

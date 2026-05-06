@@ -67,6 +67,7 @@ Returns full task definition including inputs. When identity headers are provide
 ```
 
 **Errors:**
+
 | Status | Reason |
 |--------|--------|
 | 404 | Unknown task |
@@ -105,6 +106,7 @@ Inputs with `values_url` perform additional per-parameter authorization: the rem
 ```
 
 **Errors:**
+
 | Status | Reason |
 |--------|--------|
 | 401 | Missing identity header (when `AQSH_REQUIRE_IDENTITY=true`) |
@@ -140,6 +142,7 @@ Inputs with `values_url` perform additional per-parameter authorization: the rem
 ```
 
 **Status Values:**
+
 | Status | Description |
 |--------|-------------|
 | `pending` | Queued, waiting for worker |
@@ -172,6 +175,7 @@ data: Deployment complete.
 - Connection closed when execution completes or fails
 
 **Query Parameters:**
+
 | Param | Description | Default |
 |-------|-------------|---------|
 | `follow` | Keep connection open for running executions | `true` |

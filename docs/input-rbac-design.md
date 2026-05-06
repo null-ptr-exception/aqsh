@@ -83,10 +83,10 @@ On `POST /tasks/{name}`:
    d. If the submitted value is not in the set, reject with **403 Forbidden**.
 3. Standard input validation (type, pattern, enum) runs after.
 
-On `GET /tasks`:
+On `GET /tasks/{name}`:
 
 - If a request includes identity/groups headers, inputs with `values_url` include the fetched values in the response (so clients can render dropdowns).
-- If no identity is provided, `values_url` inputs omit the values list and just indicate `"values_url": true` to signal dynamic values.
+- If no identity or groups are provided, `values_url` inputs omit the values list and just indicate `"values_url": true` to signal dynamic values.
 
 ### Error Handling
 
