@@ -6,6 +6,7 @@ on:
     tags: ["*"]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 env:
   IMAGE: ghcr.io/${{ github.repository }}
@@ -22,6 +23,18 @@ jobs:
 
       - run: go test -v ./...
 
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: docker compose --profile dev up --build -d
+
+      - run: docker compose --profile dev run --rm dev ./test/integration_test.sh
+
+      - if: always()
+        run: docker compose --profile dev down
+
   build:
     runs-on: ubuntu-latest
     steps:
@@ -35,7 +48,7 @@ jobs:
 
   publish:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [test, build]
+    needs: [test, integration, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
