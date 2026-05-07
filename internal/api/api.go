@@ -23,13 +23,14 @@ import (
 )
 
 type Server struct {
-	cfg       *config.Config
-	tasks     *tasks.TasksConfig
-	client    *asynq.Client
-	inspector *asynq.Inspector
-	logStream *logs.LogStreamer
-	rdb       redis.UniversalClient
-	version   string
+	cfg        *config.Config
+	tasks      *tasks.TasksConfig
+	client     *asynq.Client
+	inspector  *asynq.Inspector
+	logStream  *logs.LogStreamer
+	rdb        redis.UniversalClient
+	version    string
+	valCache   *valuesCache
 }
 
 func New(cfg *config.Config, tasksConfig *tasks.TasksConfig, rdb redis.UniversalClient, asynqOpt asynq.RedisConnOpt, version string) *Server {
@@ -41,6 +42,7 @@ func New(cfg *config.Config, tasksConfig *tasks.TasksConfig, rdb redis.Universal
 		logStream: logs.NewLogStreamer(rdb, cfg.LogRetention),
 		rdb:       rdb,
 		version:   version,
+		valCache:  newValuesCache(),
 	}
 }
 
@@ -103,9 +105,10 @@ func (s *Server) Run(ctx context.Context) error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /tasks/{name}", s.handleSubmitTask)
-	mux.HandleFunc("GET /tasks/{id}", s.handleGetTask)
-	mux.HandleFunc("GET /tasks/{id}/logs", s.handleGetLogs)
+	mux.HandleFunc("GET /tasks/{name}", s.handleGetTaskDef)
 	mux.HandleFunc("GET /tasks", s.handleListTasks)
+	mux.HandleFunc("GET /executions/{id}", s.handleGetExecution)
+	mux.HandleFunc("GET /executions/{id}/logs", s.handleGetLogs)
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.Handle("GET /metrics", promhttp.Handler())
 
@@ -163,6 +166,46 @@ func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate values_url inputs against remote allowed values (in order, for cascading)
+	inputValues := make(map[string]string)
+	for _, input := range taskDef.Input {
+		if v, ok := payload[input.Name]; ok && v != nil {
+			if s, ok := v.(string); ok {
+				inputValues[input.Name] = s
+			}
+		}
+		if input.ValuesURL == "" {
+			continue
+		}
+		submitted, ok := payload[input.Name]
+		if !ok || submitted == nil {
+			continue
+		}
+		submittedStr, ok := submitted.(string)
+		if !ok {
+			s.jsonError(w, http.StatusBadRequest, fmt.Sprintf("field %q must be a string for values_url validation", input.Name))
+			return
+		}
+		fetchURL := substituteURL(input.ValuesURL, identity, groups, taskName, inputValues)
+		if strings.Contains(fetchURL, "${input.") {
+			s.jsonError(w, http.StatusBadRequest, fmt.Sprintf("field %q depends on an unresolved input parameter", input.Name))
+			return
+		}
+		allowed, err := s.fetchOrCachedValues(r.Context(), fetchURL, input.ValuesCache)
+		if err != nil {
+			if strings.Contains(err.Error(), "timeout") {
+				s.jsonError(w, http.StatusGatewayTimeout, fmt.Sprintf("timeout fetching allowed values for %q", input.Name))
+			} else {
+				s.jsonError(w, http.StatusBadGateway, fmt.Sprintf("error fetching allowed values for %q: %s", input.Name, err.Error()))
+			}
+			return
+		}
+		if !isValueAllowed(submittedStr, allowed) {
+			s.jsonError(w, http.StatusForbidden, fmt.Sprintf("value %q is not allowed for field %q", submittedStr, input.Name))
+			return
+		}
+	}
+
 	env, err := s.tasks.ValidatePayload(taskName, payload)
 	if err != nil {
 		s.jsonError(w, http.StatusBadRequest, err.Error())
@@ -199,7 +242,52 @@ func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleGetTaskDef(w http.ResponseWriter, r *http.Request) {
+	taskName := r.PathValue("name")
+
+	taskDef, err := s.tasks.Resolve(taskName)
+	if err != nil {
+		s.jsonError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	result := serializeTaskDef(taskDef)
+
+	identity := r.Header.Get(s.cfg.IdentityHeader)
+	groups := r.Header.Get(s.cfg.GroupsHeader)
+	if identity != "" || groups != "" {
+		inputs := result["input"].([]map[string]any)
+		for _, m := range inputs {
+			valuesURL, ok := m["values_url"]
+			if !ok || valuesURL != true {
+				continue
+			}
+			input := findInput(taskDef.Input, m["name"].(string))
+			if input == nil {
+				continue
+			}
+			fetchURL := substituteURL(input.ValuesURL, identity, groups, taskName, nil)
+			if strings.Contains(fetchURL, "${input.") {
+				continue
+			}
+			allowed, err := s.fetchOrCachedValues(r.Context(), fetchURL, input.ValuesCache)
+			if err != nil {
+				slog.Warn("failed to resolve values_url", "task", taskName, "input", input.Name, "error", err)
+				m["values_error"] = err.Error()
+				continue
+			}
+			values := make([]map[string]string, len(allowed))
+			for i, av := range allowed {
+				values[i] = map[string]string{"name": av.Name, "value": av.Value}
+			}
+			m["values"] = values
+		}
+	}
+
+	s.jsonResponse(w, http.StatusOK, result)
+}
+
+func (s *Server) handleGetExecution(w http.ResponseWriter, r *http.Request) {
 	taskID := r.PathValue("id")
 
 	// Try all queues the worker is configured to process
@@ -333,49 +421,9 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 	result := make(map[string]any)
 	for name := range s.tasks.Tasks {
 		taskDef, _ := s.tasks.Resolve(name)
-		inputs := make([]map[string]any, 0, len(taskDef.Input))
-		for _, input := range taskDef.Input {
-			m := map[string]any{
-				"name":     input.Name,
-				"env":      input.Env,
-				"required": input.Required,
-				"type":     input.Type,
-			}
-			if input.Pattern != "" {
-				m["pattern"] = input.Pattern
-			}
-			if len(input.Enum) > 0 {
-				m["enum"] = input.Enum
-			}
-			if input.Min != nil {
-				m["min"] = *input.Min
-			}
-			if input.Max != nil {
-				m["max"] = *input.Max
-			}
-			if input.Default != "" {
-				m["default"] = input.Default
-			}
-			if input.Description != "" {
-				m["description"] = input.Description
-			}
-			inputs = append(inputs, m)
-		}
-
-		taskInfo := map[string]any{
+		result[name] = map[string]any{
 			"description": taskDef.Description,
-			"timeout":     taskDef.Timeout.String(),
-			"max_retry":   taskDef.MaxRetry,
-			"queue":       taskDef.Queue,
-			"input":       inputs,
 		}
-		if len(taskDef.AllowedGroups) > 0 {
-			taskInfo["allowed_groups"] = taskDef.AllowedGroups
-		}
-		if len(taskDef.AllowedUsers) > 0 {
-			taskInfo["allowed_users"] = taskDef.AllowedUsers
-		}
-		result[name] = taskInfo
 	}
 
 	s.jsonResponse(w, http.StatusOK, map[string]any{"tasks": result})
@@ -426,6 +474,35 @@ func (s *Server) jsonError(w http.ResponseWriter, status int, message string) {
 	s.jsonResponse(w, status, map[string]string{"error": message})
 }
 
+func (s *Server) fetchOrCachedValues(ctx context.Context, url string, cacheDuration string) ([]AllowedValue, error) {
+	ttl, _ := time.ParseDuration(cacheDuration)
+	if ttl > 0 && s.valCache != nil {
+		if cached, ok := s.valCache.get(url); ok {
+			return cached, nil
+		}
+	}
+
+	values, err := fetchAllowedValues(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+
+	if ttl > 0 && s.valCache != nil {
+		s.valCache.set(url, values, ttl)
+	}
+
+	return values, nil
+}
+
+func findInput(inputs []tasks.Input, name string) *tasks.Input {
+	for i := range inputs {
+		if inputs[i].Name == name {
+			return &inputs[i]
+		}
+	}
+	return nil
+}
+
 func splitGroups(header string) []string {
 	if header == "" {
 		return nil
@@ -461,6 +538,55 @@ func hasAnyGroup(userGroups, allowedGroups []string) bool {
 		}
 	}
 	return false
+}
+
+func serializeTaskDef(taskDef *tasks.ResolvedTask) map[string]any {
+	inputs := make([]map[string]any, 0, len(taskDef.Input))
+	for _, input := range taskDef.Input {
+		m := map[string]any{
+			"name":     input.Name,
+			"env":      input.Env,
+			"required": input.Required,
+			"type":     input.Type,
+		}
+		if input.Pattern != "" {
+			m["pattern"] = input.Pattern
+		}
+		if len(input.Enum) > 0 {
+			m["enum"] = input.Enum
+		}
+		if input.Min != nil {
+			m["min"] = *input.Min
+		}
+		if input.Max != nil {
+			m["max"] = *input.Max
+		}
+		if input.Default != "" {
+			m["default"] = input.Default
+		}
+		if input.Description != "" {
+			m["description"] = input.Description
+		}
+		if input.ValuesURL != "" {
+			m["values_url"] = true
+		}
+		inputs = append(inputs, m)
+	}
+
+	info := map[string]any{
+		"description": taskDef.Description,
+		"timeout":     taskDef.Timeout.String(),
+		"max_retry":   taskDef.MaxRetry,
+		"queue":       taskDef.Queue,
+		"input":       inputs,
+	}
+	if len(taskDef.AllowedGroups) > 0 {
+		info["allowed_groups"] = taskDef.AllowedGroups
+	}
+	if len(taskDef.AllowedUsers) > 0 {
+		info["allowed_users"] = taskDef.AllowedUsers
+	}
+	return info
 }
 
 func stateToStatus(state asynq.TaskState) string {

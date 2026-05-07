@@ -177,36 +177,15 @@ func TestHandleListTasks(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer rdb.Close()
 
-	floatPtr := func(f float64) *float64 { return &f }
-	intPtr := func(i int) *int { return &i }
-
 	tasksConfig := &tasks.TasksConfig{
 		Tasks: map[string]tasks.TaskDef{
 			"deploy": {
 				Script:      "deploy.sh",
 				Description: "Deploy the application",
-				Timeout:     "5m",
-				MaxRetry:    intPtr(3),
-				Queue:       "critical",
-				Input: []tasks.Input{
-					{
-						Name:     "env",
-						Env:      "DEPLOY_ENV",
-						Type:     "string",
-						Required: true,
-						Enum:     []string{"staging", "production"},
-					},
-					{
-						Name:        "replicas",
-						Env:         "REPLICAS",
-						Type:        "int",
-						Required:    false,
-						Min:         floatPtr(1),
-						Max:         floatPtr(10),
-						Default:     "3",
-						Description: "Number of replicas",
-					},
-				},
+			},
+			"backup": {
+				Script:      "backup.sh",
+				Description: "Backup database",
 			},
 		},
 	}
@@ -236,47 +215,135 @@ func TestHandleListTasks(t *testing.T) {
 		t.Fatal("expected tasks object in response")
 	}
 
-	deployTask, ok := tasksResp["deploy"].(map[string]any)
-	if !ok {
-		t.Fatal("expected deploy task in response")
+	if len(tasksResp) != 2 {
+		t.Errorf("expected 2 tasks, got %d", len(tasksResp))
 	}
 
+	deployTask := tasksResp["deploy"].(map[string]any)
 	if deployTask["description"] != "Deploy the application" {
 		t.Errorf("expected description='Deploy the application', got %v", deployTask["description"])
 	}
-	if deployTask["queue"] != "critical" {
-		t.Errorf("expected queue='critical', got %v", deployTask["queue"])
+
+	if _, hasInput := deployTask["input"]; hasInput {
+		t.Error("list response should not include input details")
 	}
-	if int(deployTask["max_retry"].(float64)) != 3 {
-		t.Errorf("expected max_retry=3, got %v", deployTask["max_retry"])
+	if _, hasTimeout := deployTask["timeout"]; hasTimeout {
+		t.Error("list response should not include timeout")
+	}
+}
+
+func TestHandleGetTaskDef(t *testing.T) {
+	valueSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user := r.URL.Query().Get("user")
+		switch user {
+		case "alice":
+			json.NewEncoder(w).Encode([]struct {
+				Name  string `json:"name"`
+				Value string `json:"value"`
+			}{
+				{Name: "DB One", Value: "db-001"},
+				{Name: "DB Two", Value: "db-002"},
+			})
+		default:
+			json.NewEncoder(w).Encode([]string{})
+		}
+	}))
+	defer valueSrv.Close()
+
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	tasksConfig := &tasks.TasksConfig{
+		Tasks: map[string]tasks.TaskDef{
+			"deploy": {
+				Script:      "deploy.sh",
+				Description: "Deploy the app",
+				Timeout:     "5m",
+				Input: []tasks.Input{
+					{Name: "env", Env: "ENV", Type: "string", Required: true, Enum: []string{"dev", "prod"}},
+					{Name: "instance", Env: "INSTANCE", Type: "string", ValuesURL: valueSrv.URL + "?user=${identity}"},
+				},
+			},
+		},
 	}
 
-	inputs, ok := deployTask["input"].([]any)
-	if !ok || len(inputs) != 2 {
-		t.Fatalf("expected 2 inputs, got %v", deployTask["input"])
+	s := &Server{
+		cfg: &config.Config{
+			IdentityHeader: "X-Forwarded-User",
+			GroupsHeader:   "X-Forwarded-Groups",
+		},
+		tasks: tasksConfig,
+		rdb:   rdb,
 	}
 
-	// Check first input (env)
-	envInput := inputs[0].(map[string]any)
-	if envInput["name"] != "env" {
-		t.Errorf("expected input name='env', got %v", envInput["name"])
-	}
-	if envInput["required"] != true {
-		t.Errorf("expected required=true, got %v", envInput["required"])
-	}
-	enum := envInput["enum"].([]any)
-	if len(enum) != 2 {
-		t.Errorf("expected 2 enum values, got %v", enum)
-	}
+	t.Run("without identity returns values_url flag only", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/tasks/deploy", nil)
+		req.SetPathValue("name", "deploy")
+		rec := httptest.NewRecorder()
 
-	// Check second input (replicas)
-	replicasInput := inputs[1].(map[string]any)
-	if replicasInput["default"] != "3" {
-		t.Errorf("expected default='3', got %v", replicasInput["default"])
-	}
-	if replicasInput["description"] != "Number of replicas" {
-		t.Errorf("expected description set, got %v", replicasInput["description"])
-	}
+		s.handleGetTaskDef(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("expected status %d, got %d", http.StatusOK, rec.Code)
+		}
+
+		var resp map[string]any
+		json.Unmarshal(rec.Body.Bytes(), &resp)
+
+		inputs := resp["input"].([]any)
+		instanceInput := inputs[1].(map[string]any)
+		if instanceInput["values_url"] != true {
+			t.Errorf("expected values_url=true, got %v", instanceInput["values_url"])
+		}
+		if _, hasValues := instanceInput["values"]; hasValues {
+			t.Error("expected no values when no identity provided")
+		}
+	})
+
+	t.Run("with identity resolves values", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/tasks/deploy", nil)
+		req.SetPathValue("name", "deploy")
+		req.Header.Set("X-Forwarded-User", "alice")
+		rec := httptest.NewRecorder()
+
+		s.handleGetTaskDef(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("expected status %d, got %d", http.StatusOK, rec.Code)
+		}
+
+		var resp map[string]any
+		json.Unmarshal(rec.Body.Bytes(), &resp)
+
+		inputs := resp["input"].([]any)
+		instanceInput := inputs[1].(map[string]any)
+
+		values, ok := instanceInput["values"].([]any)
+		if !ok {
+			t.Fatalf("expected values array, got %v", instanceInput["values"])
+		}
+		if len(values) != 2 {
+			t.Fatalf("expected 2 values, got %d", len(values))
+		}
+
+		first := values[0].(map[string]any)
+		if first["name"] != "DB One" || first["value"] != "db-001" {
+			t.Errorf("expected first value {DB One, db-001}, got %v", first)
+		}
+	})
+
+	t.Run("unknown task", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/tasks/nonexistent", nil)
+		req.SetPathValue("name", "nonexistent")
+		rec := httptest.NewRecorder()
+
+		s.handleGetTaskDef(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("expected status %d, got %d", http.StatusNotFound, rec.Code)
+		}
+	})
 }
 
 func TestHandleSubmitTaskNotFound(t *testing.T) {
@@ -396,7 +463,7 @@ func TestHandleSubmitTaskValidationError(t *testing.T) {
 	}
 }
 
-func TestHandleGetTaskNotFound(t *testing.T) {
+func TestHandleGetExecutionNotFound(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer rdb.Close()
@@ -415,7 +482,7 @@ func TestHandleGetTaskNotFound(t *testing.T) {
 	req.SetPathValue("id", "nonexistent-id")
 	rec := httptest.NewRecorder()
 
-	s.handleGetTask(rec, req)
+	s.handleGetExecution(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected status %d, got %d", http.StatusNotFound, rec.Code)
@@ -557,7 +624,7 @@ func TestHandleSubmitTaskIdentityOptional(t *testing.T) {
 	}
 }
 
-func TestHandleGetTaskIdentity(t *testing.T) {
+func TestHandleGetExecutionIdentity(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer rdb.Close()
@@ -597,7 +664,7 @@ func TestHandleGetTaskIdentity(t *testing.T) {
 	req.SetPathValue("id", info.ID)
 	rec := httptest.NewRecorder()
 
-	s.handleGetTask(rec, req)
+	s.handleGetExecution(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
@@ -613,7 +680,7 @@ func TestHandleGetTaskIdentity(t *testing.T) {
 	}
 }
 
-func TestHandleGetTaskNoIdentity(t *testing.T) {
+func TestHandleGetExecutionNoIdentity(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer rdb.Close()
@@ -651,7 +718,7 @@ func TestHandleGetTaskNoIdentity(t *testing.T) {
 	req.SetPathValue("id", info.ID)
 	rec := httptest.NewRecorder()
 
-	s.handleGetTask(rec, req)
+	s.handleGetExecution(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
@@ -948,6 +1015,154 @@ func TestHasAnyGroup(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHandleSubmitTaskValuesURL(t *testing.T) {
+	valueSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user := r.URL.Query().Get("user")
+		switch user {
+		case "alice":
+			json.NewEncoder(w).Encode([]string{"db-001", "db-002"})
+		case "bob":
+			json.NewEncoder(w).Encode([]string{"db-003"})
+		default:
+			json.NewEncoder(w).Encode([]string{})
+		}
+	}))
+	defer valueSrv.Close()
+
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	tasksConfig := &tasks.TasksConfig{
+		Tasks: map[string]tasks.TaskDef{
+			"upgrade-db": {
+				Script: "upgrade.sh",
+				Input: []tasks.Input{
+					{
+						Name:      "instance",
+						Env:       "DB_INSTANCE",
+						Required:  true,
+						Type:      "string",
+						ValuesURL: valueSrv.URL + "?user=${identity}",
+					},
+				},
+			},
+		},
+	}
+
+	s := &Server{
+		cfg: &config.Config{
+			IdentityHeader: "X-Forwarded-User",
+			GroupsHeader:   "X-Forwarded-Groups",
+		},
+		tasks:     tasksConfig,
+		rdb:       rdb,
+		logStream: logs.NewLogStreamer(rdb, time.Hour),
+		client:    asynq.NewClient(asynq.RedisClientOpt{Addr: mr.Addr()}),
+	}
+	defer s.client.Close()
+
+	t.Run("allowed value passes", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/tasks/upgrade-db",
+			strings.NewReader(`{"instance": "db-001"}`))
+		req.SetPathValue("name", "upgrade-db")
+		req.Header.Set("X-Forwarded-User", "alice")
+		rec := httptest.NewRecorder()
+
+		s.handleSubmitTask(rec, req)
+
+		if rec.Code != http.StatusAccepted {
+			t.Errorf("expected status %d, got %d: %s", http.StatusAccepted, rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("disallowed value returns 403", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/tasks/upgrade-db",
+			strings.NewReader(`{"instance": "db-003"}`))
+		req.SetPathValue("name", "upgrade-db")
+		req.Header.Set("X-Forwarded-User", "alice")
+		rec := httptest.NewRecorder()
+
+		s.handleSubmitTask(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("expected status %d, got %d: %s", http.StatusForbidden, rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("different user sees different values", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/tasks/upgrade-db",
+			strings.NewReader(`{"instance": "db-003"}`))
+		req.SetPathValue("name", "upgrade-db")
+		req.Header.Set("X-Forwarded-User", "bob")
+		rec := httptest.NewRecorder()
+
+		s.handleSubmitTask(rec, req)
+
+		if rec.Code != http.StatusAccepted {
+			t.Errorf("expected status %d, got %d: %s", http.StatusAccepted, rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("unknown user gets empty list returns 403", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/tasks/upgrade-db",
+			strings.NewReader(`{"instance": "db-001"}`))
+		req.SetPathValue("name", "upgrade-db")
+		req.Header.Set("X-Forwarded-User", "unknown")
+		rec := httptest.NewRecorder()
+
+		s.handleSubmitTask(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("expected status %d, got %d: %s", http.StatusForbidden, rec.Code, rec.Body.String())
+		}
+	})
+}
+
+func TestHandleSubmitTaskValuesURLError(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	t.Run("remote server error returns 502", func(t *testing.T) {
+		errSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer errSrv.Close()
+
+		tasksConfig := &tasks.TasksConfig{
+			Tasks: map[string]tasks.TaskDef{
+				"test": {
+					Script: "test.sh",
+					Input: []tasks.Input{
+						{Name: "val", Env: "VAL", Type: "string", ValuesURL: errSrv.URL},
+					},
+				},
+			},
+		}
+
+		s := &Server{
+			cfg:       &config.Config{IdentityHeader: "X-Forwarded-User"},
+			tasks:     tasksConfig,
+			rdb:       rdb,
+			logStream: logs.NewLogStreamer(rdb, time.Hour),
+			client:    asynq.NewClient(asynq.RedisClientOpt{Addr: mr.Addr()}),
+		}
+		defer s.client.Close()
+
+		req := httptest.NewRequest(http.MethodPost, "/tasks/test",
+			strings.NewReader(`{"val": "x"}`))
+		req.SetPathValue("name", "test")
+		rec := httptest.NewRecorder()
+
+		s.handleSubmitTask(rec, req)
+
+		if rec.Code != http.StatusBadGateway {
+			t.Errorf("expected status %d, got %d: %s", http.StatusBadGateway, rec.Code, rec.Body.String())
+		}
+	})
 }
 
 func TestHandleGetLogs(t *testing.T) {

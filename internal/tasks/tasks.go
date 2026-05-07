@@ -46,6 +46,8 @@ type Input struct {
 	Max         *float64 `yaml:"max"`
 	Default     string   `yaml:"default"`
 	Description string   `yaml:"description"`
+	ValuesURL   string   `yaml:"values_url"`
+	ValuesCache string   `yaml:"values_cache"`
 
 	compiledPattern *regexp.Regexp
 }
@@ -175,6 +177,22 @@ func Load(path string) (*TasksConfig, error) {
 	var cfg TasksConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing tasks config: %w", err)
+	}
+
+	for taskName, task := range cfg.Tasks {
+		for _, input := range task.Input {
+			if input.ValuesURL != "" && len(input.Enum) > 0 {
+				return nil, fmt.Errorf("task %q input %q: values_url and enum are mutually exclusive", taskName, input.Name)
+			}
+			if input.ValuesCache != "" && input.ValuesURL == "" {
+				return nil, fmt.Errorf("task %q input %q: values_cache requires values_url", taskName, input.Name)
+			}
+			if input.ValuesCache != "" {
+				if _, err := time.ParseDuration(input.ValuesCache); err != nil {
+					return nil, fmt.Errorf("task %q input %q: invalid values_cache %q: %w", taskName, input.Name, input.ValuesCache, err)
+				}
+			}
+		}
 	}
 
 	return &cfg, nil

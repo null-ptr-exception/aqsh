@@ -1,6 +1,78 @@
 # API Reference
 
-## POST /tasks/{name} - Submit Task
+## Task Definitions
+
+### GET /tasks - List All Task Definitions
+
+Returns task names and descriptions. Use `GET /tasks/{name}` for full details.
+
+**Response (200 OK):**
+```json
+{
+  "tasks": {
+    "deploy": {
+      "description": "Deploy application to environment"
+    },
+    "backup": {
+      "description": "Backup database to S3"
+    }
+  }
+}
+```
+
+### GET /tasks/{name} - Get Task Definition
+
+Returns full task definition including inputs. When identity headers are provided, inputs with `values_url` resolve the remote URL and include the allowed values for that user.
+
+**Response without identity (200 OK):**
+```json
+{
+  "description": "Upgrade a database instance",
+  "timeout": "10m",
+  "max_retry": 0,
+  "queue": "default",
+  "input": [
+    {
+      "name": "instance",
+      "env": "DB_INSTANCE",
+      "required": true,
+      "type": "string",
+      "values_url": true
+    }
+  ]
+}
+```
+
+**Response with identity header (200 OK):**
+```json
+{
+  "description": "Upgrade a database instance",
+  "timeout": "10m",
+  "max_retry": 0,
+  "queue": "default",
+  "input": [
+    {
+      "name": "instance",
+      "env": "DB_INSTANCE",
+      "required": true,
+      "type": "string",
+      "values_url": true,
+      "values": [
+        {"name": "Production DB 001", "value": "prod-db-001"},
+        {"name": "Production DB 002", "value": "prod-db-002"}
+      ]
+    }
+  ]
+}
+```
+
+**Errors:**
+
+| Status | Reason |
+|--------|--------|
+| 404 | Unknown task |
+
+### POST /tasks/{name} - Submit Task Execution
 
 **Request:**
 ```http
@@ -22,6 +94,8 @@ The identity header (default `X-Forwarded-User`, configurable via `AQSH_IDENTITY
 
 Tasks can restrict access using `allowed_users` and/or `allowed_groups` in their config. If either matches, the request is authorized (OR logic). `allowed_users` matches against the identity header; `allowed_groups` matches against the groups header (comma-separated). If neither is configured, the task is open to all.
 
+Inputs with `values_url` perform additional per-parameter authorization: the remote URL is fetched with user context, and the submitted value must be in the returned list.
+
 **Response (202 Accepted):**
 ```json
 {
@@ -32,15 +106,20 @@ Tasks can restrict access using `allowed_users` and/or `allowed_groups` in their
 ```
 
 **Errors:**
+
 | Status | Reason |
 |--------|--------|
 | 401 | Missing identity header (when `AQSH_REQUIRE_IDENTITY=true`) |
-| 403 | Not authorized for this task (user/group check failed) |
+| 403 | Not authorized for this task (user/group check failed), or submitted value not in allowed values from `values_url` |
 | 400 | Validation error (missing field, invalid pattern, etc.) |
 | 404 | Unknown task |
+| 502 | Remote values URL returned error |
+| 504 | Remote values URL timed out |
 | 503 | Redis unavailable |
 
-## GET /tasks/{id} - Get Task Status
+## Executions
+
+### GET /executions/{id} - Get Execution Status
 
 **Response (200 OK):**
 ```json
@@ -63,6 +142,7 @@ Tasks can restrict access using `allowed_users` and/or `allowed_groups` in their
 ```
 
 **Status Values:**
+
 | Status | Description |
 |--------|-------------|
 | `pending` | Queued, waiting for worker |
@@ -71,7 +151,7 @@ Tasks can restrict access using `allowed_users` and/or `allowed_groups` in their
 | `failed` | Failed after all retries |
 | `retrying` | Failed, scheduled for retry |
 
-## GET /tasks/{id}/logs - Stream Logs
+### GET /executions/{id}/logs - Stream Execution Logs
 
 **Response (200 OK, SSE):**
 ```http
@@ -89,73 +169,20 @@ data: Deployment complete.
 ```
 
 **Behavior:**
-- For running tasks: streams logs in real-time
-- For completed tasks: streams stored logs
-- For pending tasks: waits for task to start, then streams
-- Connection closed when task completes or fails
+- For running executions: streams logs in real-time
+- For completed executions: streams stored logs
+- For pending executions: waits for execution to start, then streams
+- Connection closed when execution completes or fails
 
 **Query Parameters:**
+
 | Param | Description | Default |
 |-------|-------------|---------|
-| `follow` | Keep connection open for running tasks | `true` |
+| `follow` | Keep connection open for running executions | `true` |
 
-## GET /tasks - List Task Types
+## System
 
-**Response (200 OK):**
-```json
-{
-  "tasks": {
-    "deploy": {
-      "description": "Deploy application to environment",
-      "timeout": "10m",
-      "max_retry": 2,
-      "queue": "default",
-      "allowed_groups": ["deploy-team", "platform-team"],
-      "input": [
-        {
-          "name": "version",
-          "env": "VERSION",
-          "required": true,
-          "type": "string",
-          "pattern": "^v?\\d+\\.\\d+\\.\\d+$",
-          "description": "Semantic version to deploy"
-        },
-        {
-          "name": "environment",
-          "env": "ENVIRONMENT",
-          "required": true,
-          "type": "string",
-          "enum": ["dev", "staging", "prod"]
-        },
-        {
-          "name": "dry_run",
-          "env": "DRY_RUN",
-          "required": false,
-          "type": "bool",
-          "default": "false"
-        }
-      ]
-    },
-    "backup": {
-      "description": "Backup database to S3",
-      "timeout": "30m",
-      "max_retry": 1,
-      "queue": "long-running",
-      "input": [
-        {
-          "name": "database",
-          "env": "DATABASE",
-          "required": true,
-          "type": "string",
-          "pattern": "^[a-z][a-z0-9_]{2,30}$"
-        }
-      ]
-    }
-  }
-}
-```
-
-## GET /health - Health Check
+### GET /health - Health Check
 
 **Response (200 OK):**
 ```json
@@ -167,6 +194,6 @@ data: Deployment complete.
 }
 ```
 
-## GET /metrics - Prometheus Metrics
+### GET /metrics - Prometheus Metrics
 
 Returns Prometheus-formatted metrics. See [Observability](../README.md#observability) for details.

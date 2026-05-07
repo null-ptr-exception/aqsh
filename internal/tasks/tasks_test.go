@@ -469,6 +469,131 @@ func TestValidatePayload(t *testing.T) {
 	})
 }
 
+func TestLoadMutualExclusion(t *testing.T) {
+	content := `
+tasks:
+  bad:
+    script: test.sh
+    input:
+      - name: env
+        env: ENV
+        type: string
+        enum: [dev, prod]
+        values_url: "http://example.com/values"
+`
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "tasks.yaml")
+	if err := os.WriteFile(tmpFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(tmpFile)
+	if err == nil {
+		t.Error("expected error for values_url + enum")
+	}
+}
+
+func TestLoadWithValuesURL(t *testing.T) {
+	content := `
+tasks:
+  test:
+    script: test.sh
+    input:
+      - name: instance
+        env: INSTANCE
+        type: string
+        values_url: "http://authz.internal/instances?user=${identity}"
+`
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "tasks.yaml")
+	if err := os.WriteFile(tmpFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(tmpFile)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	task := cfg.Tasks["test"]
+	if task.Input[0].ValuesURL != "http://authz.internal/instances?user=${identity}" {
+		t.Errorf("expected values_url to be set, got %q", task.Input[0].ValuesURL)
+	}
+}
+
+func TestLoadValuesCacheValidation(t *testing.T) {
+	t.Run("valid values_cache", func(t *testing.T) {
+		content := `
+tasks:
+  test:
+    script: test.sh
+    input:
+      - name: instance
+        type: string
+        values_url: "http://example.com/values"
+        values_cache: 30s
+`
+		tmpDir := t.TempDir()
+		tmpFile := filepath.Join(tmpDir, "tasks.yaml")
+		if err := os.WriteFile(tmpFile, []byte(content), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
+
+		cfg, err := Load(tmpFile)
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.Tasks["test"].Input[0].ValuesCache != "30s" {
+			t.Errorf("expected values_cache=30s, got %q", cfg.Tasks["test"].Input[0].ValuesCache)
+		}
+	})
+
+	t.Run("values_cache without values_url", func(t *testing.T) {
+		content := `
+tasks:
+  test:
+    script: test.sh
+    input:
+      - name: env
+        type: string
+        values_cache: 30s
+`
+		tmpDir := t.TempDir()
+		tmpFile := filepath.Join(tmpDir, "tasks.yaml")
+		if err := os.WriteFile(tmpFile, []byte(content), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
+
+		_, err := Load(tmpFile)
+		if err == nil {
+			t.Error("expected error for values_cache without values_url")
+		}
+	})
+
+	t.Run("invalid values_cache duration", func(t *testing.T) {
+		content := `
+tasks:
+  test:
+    script: test.sh
+    input:
+      - name: instance
+        type: string
+        values_url: "http://example.com/values"
+        values_cache: notaduration
+`
+		tmpDir := t.TempDir()
+		tmpFile := filepath.Join(tmpDir, "tasks.yaml")
+		if err := os.WriteFile(tmpFile, []byte(content), 0644); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
+
+		_, err := Load(tmpFile)
+		if err == nil {
+			t.Error("expected error for invalid values_cache duration")
+		}
+	})
+}
+
 func ptr(f float64) *float64 {
 	return &f
 }
