@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Go 1.21+
+- Go 1.25+ (the pinned toolchain is Go 1.26.8)
 - Docker / Docker Compose
 - kubectl + Skaffold (for Kubernetes development)
 
@@ -60,6 +60,8 @@ The integration tests run as a Kubernetes Job using `skaffold verify`, which:
 - Streams test output and reports pass/fail status
 
 ## Running Tests
+
+MCP protocol and ownership tests use the official SDK with local HTTP servers. When `redis-server` is installed, `go test ./...` also runs a smoke test that builds the production binary and executes a real shell task against temporary Redis. No database or Kubernetes deployment is required. Run `go test -race ./...` for concurrency checks.
 
 ```bash
 # Unit tests

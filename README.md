@@ -124,6 +124,14 @@ See [docs/api.md](docs/api.md) for full API documentation.
 
 ---
 
+## MCP
+
+The optional [MCP interface](docs/mcp.md) exposes individually opted-in read-only tasks at `/mcp`. It shares the existing validation, Asynq queue, and worker, returning an execution ID for polling. MCP is disabled by default and requires trusted identity headers plus owner-enforced execution access on both MCP and REST.
+
+See the [generic example](examples/mcp/tasks.yaml) and [setup and upgrade guide](docs/mcp.md). Database operation catalogs remain in the projects that supply task scripts.
+
+---
+
 ## Task Configuration
 
 ### tasks.yaml
@@ -366,6 +374,9 @@ If client disconnects and reconnects:
 | `AQSH_IDENTITY_HEADER` | Header name for user identity | `X-Forwarded-User` |
 | `AQSH_REQUIRE_IDENTITY` | Require identity header (401 if missing) | `false` |
 | `AQSH_GROUPS_HEADER` | Header name for user groups | `X-Forwarded-Groups` |
+| `AQSH_MCP_ENABLED` | Enable the optional MCP endpoint | `false` |
+| `AQSH_MCP_ALLOWED_ORIGINS` | Exact comma-separated allowed origins for MCP requests | - |
+| `AQSH_EXECUTION_ACCESS` | `legacy` or `owner`; MCP requires owner | `legacy` |
 | `AQSH_LOG_RETENTION` | Log stream retention | `24h` |
 | `AQSH_RESULT_RETENTION` | Completed task retention | `72h` |
 

@@ -1,5 +1,11 @@
 # API Reference
 
+The optional [MCP interface](mcp.md) uses the same submission and execution services.
+
+With `AQSH_EXECUTION_ACCESS=owner`, task discovery requires identity and respects task ACLs. Execution status and logs additionally require the stored owner and current task/target permission; unauthorized or anonymous legacy executions return 404, and missing identity returns 401. The default `legacy` execution-access mode preserves existing query behavior. MCP requires owner mode.
+
+Submissions accept one JSON object with a 1 MiB body limit. Effective defaults are validated before dynamic-value authorization; fractional/out-of-range integers and non-finite numbers are rejected.
+
 ## Task Definitions
 
 ### GET /tasks - List All Task Definitions

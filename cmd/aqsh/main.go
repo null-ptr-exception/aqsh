@@ -60,6 +60,10 @@ func main() {
 	}
 
 	// Load tasks config
+	if err := cfg.Validate(); err != nil {
+		slog.Error("invalid configuration", "error", err)
+		os.Exit(1)
+	}
 	tasksCfg, err := tasks.Load(cfg.TasksConfig)
 	if err != nil {
 		slog.Error("failed to load tasks config", "error", err)

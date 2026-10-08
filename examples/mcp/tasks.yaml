@@ -1,0 +1,21 @@
+defaults:
+  timeout: 1m
+  max_retry: 0
+
+tasks:
+  inspect:
+    script: inspect.sh
+    description: Return a sample structured result without changing the target
+    allowed_users: [alice]
+    mcp:
+      enabled: true
+      name: example_inspect
+      read_only: true
+      result_mode: json
+      max_result_bytes: 65536
+    input:
+      - name: target
+        env: TARGET
+        type: string
+        required: true
+        pattern: '^[a-z0-9-]{1,63}$'

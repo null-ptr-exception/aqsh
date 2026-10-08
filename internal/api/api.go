@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -23,14 +24,14 @@ import (
 )
 
 type Server struct {
-	cfg        *config.Config
-	tasks      *tasks.TasksConfig
-	client     *asynq.Client
-	inspector  *asynq.Inspector
-	logStream  *logs.LogStreamer
-	rdb        redis.UniversalClient
-	version    string
-	valCache   *valuesCache
+	cfg       *config.Config
+	tasks     *tasks.TasksConfig
+	client    *asynq.Client
+	inspector *asynq.Inspector
+	logStream *logs.LogStreamer
+	rdb       redis.UniversalClient
+	version   string
+	valCache  *valuesCache
 }
 
 func New(cfg *config.Config, tasksConfig *tasks.TasksConfig, rdb redis.UniversalClient, asynqOpt asynq.RedisConnOpt, version string) *Server {
@@ -91,18 +92,11 @@ func (s *Server) accessLog(next http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) Run(ctx context.Context) error {
-	// Ensure all configured queues are registered in Redis
-	// This is needed for Inspector.GetTaskInfo to work
-	for _, q := range s.cfg.WorkerQueues {
-		s.rdb.SAdd(ctx, "asynq:queues", q)
+// Handler builds the same routes used in production and protocol tests.
+func (s *Server) Handler() (http.Handler, error) {
+	if err := s.cfg.Validate(); err != nil {
+		return nil, err
 	}
-	s.rdb.SAdd(ctx, "asynq:queues", "default")
-
-	// Register asynq queue metrics collector
-	queueMetrics := asynqmetrics.NewQueueMetricsCollector(s.inspector)
-	prometheus.MustRegister(queueMetrics)
-
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /tasks/{name}", s.handleSubmitTask)
 	mux.HandleFunc("GET /tasks/{name}", s.handleGetTaskDef)
@@ -118,9 +112,35 @@ func (s *Server) Run(ctx context.Context) error {
 		slog.Info("coverage endpoint enabled", "cover_dir", coverDir)
 	}
 
+	if s.cfg.MCPEnabled {
+		handler, err := s.mcpHandler()
+		if err != nil {
+			return nil, err
+		}
+		mux.Handle("/mcp", handler)
+	}
+	return s.accessLog(mux), nil
+}
+
+func (s *Server) Run(ctx context.Context) error {
+	handler, err := s.Handler()
+	if err != nil {
+		return err
+	}
+	// Ensure all configured queues are registered in Redis
+	// This is needed for Inspector.GetTaskInfo to work
+	for _, q := range s.taskQueues() {
+		s.rdb.SAdd(ctx, "asynq:queues", q)
+	}
+	s.rdb.SAdd(ctx, "asynq:queues", "default")
+
+	// Register asynq queue metrics collector
+	queueMetrics := asynqmetrics.NewQueueMetricsCollector(s.inspector)
+	prometheus.MustRegister(queueMetrics)
+
 	srv := &http.Server{
 		Addr:    s.cfg.Bind,
-		Handler: s.accessLog(mux),
+		Handler: handler,
 	}
 
 	go func() {
@@ -135,115 +155,44 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
-	taskName := r.PathValue("name")
-
-	identity := r.Header.Get(s.cfg.IdentityHeader)
-	if s.cfg.RequireIdentity && identity == "" {
-		s.jsonError(w, http.StatusUnauthorized, "identity header required")
+	name := r.PathValue("name")
+	p := s.requestPrincipal(r)
+	if _, err := s.authorizeTask(name, p); err != nil {
+		s.writeServiceError(w, err)
 		return
 	}
-
-	taskDef, err := s.tasks.Resolve(taskName)
-	if err != nil {
-		s.jsonError(w, http.StatusNotFound, err.Error())
-		return
-	}
-
-	// Authorization: allowed_users OR allowed_groups
-	groups := r.Header.Get(s.cfg.GroupsHeader)
-	if len(taskDef.AllowedUsers) > 0 || len(taskDef.AllowedGroups) > 0 {
-		userOK := len(taskDef.AllowedUsers) > 0 && isAllowedUser(identity, taskDef.AllowedUsers)
-		groupOK := len(taskDef.AllowedGroups) > 0 && hasAnyGroup(splitGroups(groups), taskDef.AllowedGroups)
-		if !userOK && !groupOK {
-			s.jsonError(w, http.StatusForbidden, "not authorized for this task")
-			return
-		}
-	}
-
 	var payload map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		s.jsonError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err := decoder.Decode(&payload); err != nil || payload == nil {
+		s.jsonError(w, http.StatusBadRequest, "invalid JSON object")
 		return
 	}
-
-	// Validate values_url inputs against remote allowed values (in order, for cascading)
-	inputValues := make(map[string]string)
-	for _, input := range taskDef.Input {
-		if v, ok := payload[input.Name]; ok && v != nil {
-			if s, ok := v.(string); ok {
-				inputValues[input.Name] = s
-			}
-		}
-		if input.ValuesURL == "" {
-			continue
-		}
-		submitted, ok := payload[input.Name]
-		if !ok || submitted == nil {
-			continue
-		}
-		submittedStr, ok := submitted.(string)
-		if !ok {
-			s.jsonError(w, http.StatusBadRequest, fmt.Sprintf("field %q must be a string for values_url validation", input.Name))
-			return
-		}
-		fetchURL := substituteURL(input.ValuesURL, identity, groups, taskName, inputValues)
-		if strings.Contains(fetchURL, "${input.") {
-			s.jsonError(w, http.StatusBadRequest, fmt.Sprintf("field %q depends on an unresolved input parameter", input.Name))
-			return
-		}
-		allowed, err := s.fetchOrCachedValues(r.Context(), fetchURL, input.ValuesCache)
-		if err != nil {
-			if strings.Contains(err.Error(), "timeout") {
-				s.jsonError(w, http.StatusGatewayTimeout, fmt.Sprintf("timeout fetching allowed values for %q", input.Name))
-			} else {
-				s.jsonError(w, http.StatusBadGateway, fmt.Sprintf("error fetching allowed values for %q: %s", input.Name, err.Error()))
-			}
-			return
-		}
-		if !isValueAllowed(submittedStr, allowed) {
-			s.jsonError(w, http.StatusForbidden, fmt.Sprintf("value %q is not allowed for field %q", submittedStr, input.Name))
-			return
-		}
+	var extra any
+	if decoder.Decode(&extra) != io.EOF {
+		s.jsonError(w, http.StatusBadRequest, "expected one JSON object")
+		return
 	}
-
-	env, err := s.tasks.ValidatePayload(taskName, payload)
+	result, err := s.submit(r.Context(), name, p, payload)
 	if err != nil {
-		s.jsonError(w, http.StatusBadRequest, err.Error())
+		s.writeServiceError(w, err)
 		return
 	}
-
-	taskPayload := worker.TaskPayload{
-		Name:      taskName,
-		CreatedAt: time.Now(),
-		Identity:  identity,
-		Groups:    groups,
-		Env:       env,
-		Payload:   payload,
-	}
-	taskBytes, _ := json.Marshal(taskPayload)
-
-	task := asynq.NewTask(worker.TaskType, taskBytes,
-		asynq.Queue(taskDef.Queue),
-		asynq.Timeout(taskDef.Timeout),
-		asynq.MaxRetry(taskDef.MaxRetry),
-		asynq.Retention(s.cfg.ResultRetention),
-	)
-
-	info, err := s.client.Enqueue(task)
-	if err != nil {
-		s.jsonError(w, http.StatusServiceUnavailable, "failed to enqueue task: "+err.Error())
-		return
-	}
-
-	s.jsonResponse(w, http.StatusAccepted, map[string]any{
-		"id":     info.ID,
-		"queue":  info.Queue,
-		"status": "pending",
-	})
+	s.jsonResponse(w, http.StatusAccepted, result)
 }
 
 func (s *Server) handleGetTaskDef(w http.ResponseWriter, r *http.Request) {
 	taskName := r.PathValue("name")
+	p := s.requestPrincipal(r)
+	if s.cfg.ExecutionAccess == "owner" {
+		if _, err := s.authorizeTask(taskName, p); err != nil {
+			if p.Identity == "" {
+				s.writeServiceError(w, err)
+			} else {
+				s.jsonError(w, http.StatusNotFound, "task not found")
+			}
+			return
+		}
+	}
 
 	taskDef, err := s.tasks.Resolve(taskName)
 	if err != nil {
@@ -253,9 +202,7 @@ func (s *Server) handleGetTaskDef(w http.ResponseWriter, r *http.Request) {
 
 	result := serializeTaskDef(taskDef)
 
-	identity := r.Header.Get(s.cfg.IdentityHeader)
-	groups := r.Header.Get(s.cfg.GroupsHeader)
-	if identity != "" || groups != "" {
+	if p.Identity != "" || p.Groups != "" {
 		inputs := result["input"].([]map[string]any)
 		for _, m := range inputs {
 			valuesURL, ok := m["values_url"]
@@ -266,11 +213,11 @@ func (s *Server) handleGetTaskDef(w http.ResponseWriter, r *http.Request) {
 			if input == nil {
 				continue
 			}
-			fetchURL := substituteURL(input.ValuesURL, identity, groups, taskName, nil)
+			fetchURL := substituteURL(input.ValuesURL, p.Identity, p.Groups, taskName, nil)
 			if strings.Contains(fetchURL, "${input.") {
 				continue
 			}
-			allowed, err := s.fetchOrCachedValues(r.Context(), fetchURL, input.ValuesCache)
+			allowed, err := s.fetchOrCachedValues(r.Context(), valuesCacheKey(p, taskName, input.Name, fetchURL), fetchURL, input.ValuesCache)
 			if err != nil {
 				slog.Warn("failed to resolve values_url", "task", taskName, "input", input.Name, "error", err)
 				m["values_error"] = err.Error()
@@ -290,26 +237,9 @@ func (s *Server) handleGetTaskDef(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetExecution(w http.ResponseWriter, r *http.Request) {
 	taskID := r.PathValue("id")
 
-	// Try all queues the worker is configured to process
-	allQueues := append([]string{"default"}, s.cfg.WorkerQueues...)
-	seen := make(map[string]bool)
-
-	var info *asynq.TaskInfo
-	var err error
-
-	for _, q := range allQueues {
-		if seen[q] {
-			continue
-		}
-		seen[q] = true
-		info, err = s.inspector.GetTaskInfo(q, taskID)
-		if err == nil {
-			break
-		}
-	}
-
+	info, _, err := s.readExecution(r.Context(), taskID, s.requestPrincipal(r), false)
 	if err != nil {
-		s.jsonError(w, http.StatusNotFound, "task not found")
+		s.writeServiceError(w, err)
 		return
 	}
 
@@ -363,6 +293,12 @@ func (s *Server) handleGetExecution(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 	taskID := r.PathValue("id")
+	if s.cfg.ExecutionAccess == "owner" {
+		if _, _, err := s.readExecution(r.Context(), taskID, s.requestPrincipal(r), false); err != nil {
+			s.writeServiceError(w, err)
+			return
+		}
+	}
 	follow := r.URL.Query().Get("follow") != "false"
 
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -418,9 +354,17 @@ func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
+	p := s.requestPrincipal(r)
+	if s.cfg.ExecutionAccess == "owner" && p.Identity == "" {
+		s.jsonError(w, http.StatusUnauthorized, "identity header required")
+		return
+	}
 	result := make(map[string]any)
 	for name := range s.tasks.Tasks {
-		taskDef, _ := s.tasks.Resolve(name)
+		taskDef, err := s.tasks.Resolve(name)
+		if err != nil || s.cfg.ExecutionAccess == "owner" && !canUseTask(p, taskDef) {
+			continue
+		}
 		result[name] = map[string]any{
 			"description": taskDef.Description,
 		}
@@ -474,10 +418,10 @@ func (s *Server) jsonError(w http.ResponseWriter, status int, message string) {
 	s.jsonResponse(w, status, map[string]string{"error": message})
 }
 
-func (s *Server) fetchOrCachedValues(ctx context.Context, url string, cacheDuration string) ([]AllowedValue, error) {
+func (s *Server) fetchOrCachedValues(ctx context.Context, key, url string, cacheDuration string) ([]AllowedValue, error) {
 	ttl, _ := time.ParseDuration(cacheDuration)
 	if ttl > 0 && s.valCache != nil {
-		if cached, ok := s.valCache.get(url); ok {
+		if cached, ok := s.valCache.get(key); ok {
 			return cached, nil
 		}
 	}
@@ -488,7 +432,7 @@ func (s *Server) fetchOrCachedValues(ctx context.Context, url string, cacheDurat
 	}
 
 	if ttl > 0 && s.valCache != nil {
-		s.valCache.set(url, values, ttl)
+		s.valCache.set(key, values, ttl)
 	}
 
 	return values, nil

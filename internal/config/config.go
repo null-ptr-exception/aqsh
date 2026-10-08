@@ -1,7 +1,9 @@
 package config
 
 import (
+	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -21,6 +23,9 @@ type Config struct {
 	IdentityHeader    string
 	RequireIdentity   bool
 	GroupsHeader      string
+	MCPEnabled        bool
+	MCPAllowedOrigins []string
+	ExecutionAccess   string
 	LogLevel          slog.Level
 	Redis             RedisConfig
 }
@@ -51,6 +56,9 @@ func Load() *Config {
 		IdentityHeader:    getEnv("AQSH_IDENTITY_HEADER", "X-Forwarded-User"),
 		RequireIdentity:   getEnvBool("AQSH_REQUIRE_IDENTITY", false),
 		GroupsHeader:      getEnv("AQSH_GROUPS_HEADER", "X-Forwarded-Groups"),
+		MCPEnabled:        getEnvBool("AQSH_MCP_ENABLED", false),
+		MCPAllowedOrigins: getEnvList("AQSH_MCP_ALLOWED_ORIGINS", nil),
+		ExecutionAccess:   getEnv("AQSH_EXECUTION_ACCESS", "legacy"),
 		LogLevel:          getEnvLogLevel("AQSH_LOG_LEVEL", slog.LevelInfo),
 		Redis: RedisConfig{
 			Addr:           getEnv("AQSH_REDIS_ADDR", "localhost:6379"),
@@ -60,6 +68,29 @@ func Load() *Config {
 			SentinelMaster: getEnv("AQSH_REDIS_SENTINEL_MASTER", "mymaster"),
 		},
 	}
+}
+
+// Validate rejects configurations that would expose MCP without execution isolation.
+func (c *Config) Validate() error {
+	switch c.ExecutionAccess {
+	case "", "legacy", "owner":
+	default:
+		return fmt.Errorf("AQSH_EXECUTION_ACCESS must be legacy or owner")
+	}
+	if c.ExecutionAccess == "owner" && (!c.RequireIdentity || c.IdentityHeader == "") {
+		return fmt.Errorf("owner execution access requires AQSH_REQUIRE_IDENTITY=true and an identity header")
+	}
+	if c.MCPEnabled && c.ExecutionAccess != "owner" {
+		return fmt.Errorf("MCP requires AQSH_EXECUTION_ACCESS=owner")
+	}
+	for _, origin := range c.MCPAllowedOrigins {
+		u, err := url.Parse(origin)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
+			u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {
+			return fmt.Errorf("invalid MCP allowed origin %q: use scheme://host[:port]", origin)
+		}
+	}
+	return nil
 }
 
 func getEnv(key, defaultVal string) string {

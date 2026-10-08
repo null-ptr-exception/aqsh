@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -36,6 +37,7 @@ type TaskDef struct {
 	AllowedUsers  []string `yaml:"allowed_users"`
 	AllowedGroups []string `yaml:"allowed_groups"`
 	Input         []Input  `yaml:"input"`
+	MCP           *MCPTool `yaml:"mcp"`
 }
 
 type Input struct {
@@ -104,6 +106,9 @@ func (i *Input) Validate(value any) error {
 		default:
 			return fmt.Errorf("field %q must be an integer", i.Name)
 		}
+		if math.IsNaN(n) || math.IsInf(n, 0) || math.Trunc(n) != n || n < -0x1p63 || n >= 0x1p63 {
+			return fmt.Errorf("field %q must be an integer within the int64 range", i.Name)
+		}
 		if i.Min != nil && n < *i.Min {
 			return fmt.Errorf("field %q must be >= %v", i.Name, *i.Min)
 		}
@@ -121,6 +126,9 @@ func (i *Input) Validate(value any) error {
 		default:
 			return fmt.Errorf("field %q must be a number", i.Name)
 		}
+		if math.IsNaN(n) || math.IsInf(n, 0) {
+			return fmt.Errorf("field %q must be finite", i.Name)
+		}
 		if i.Min != nil && n < *i.Min {
 			return fmt.Errorf("field %q must be >= %v", i.Name, *i.Min)
 		}
@@ -132,6 +140,8 @@ func (i *Input) Validate(value any) error {
 		if _, ok := value.(bool); !ok {
 			return fmt.Errorf("field %q must be a boolean", i.Name)
 		}
+	default:
+		return fmt.Errorf("field %q has unsupported type %q", i.Name, i.Type)
 	}
 
 	return nil
@@ -169,6 +179,7 @@ type ResolvedTask struct {
 	AllowedUsers  []string
 	AllowedGroups []string
 	Input         []Input
+	MCP           *MCPTool
 }
 
 func Load(path string) (*TasksConfig, error) {
@@ -229,6 +240,9 @@ func Load(path string) (*TasksConfig, error) {
 		}
 	}
 
+	if err := cfg.ValidateMCP(); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
 }
 
@@ -342,10 +356,15 @@ func (c *TasksConfig) Resolve(name string) (*ResolvedTask, error) {
 		AllowedUsers:  task.AllowedUsers,
 		AllowedGroups: task.AllowedGroups,
 		Input:         task.Input,
+		MCP:           task.MCP,
 	}, nil
 }
 
 func (c *TasksConfig) ValidatePayload(taskName string, payload map[string]any) (map[string]string, error) {
+	payload, err := c.NormalizePayload(taskName, payload)
+	if err != nil {
+		return nil, err
+	}
 	task, err := c.Resolve(taskName)
 	if err != nil {
 		return nil, err
@@ -353,23 +372,9 @@ func (c *TasksConfig) ValidatePayload(taskName string, payload map[string]any) (
 
 	env := make(map[string]string)
 
-	// Check for unknown fields
-	knownFields := make(map[string]bool)
-	for _, input := range task.Input {
-		knownFields[input.Name] = true
-	}
-	for k := range payload {
-		if !knownFields[k] {
-			return nil, fmt.Errorf("unknown field %q", k)
-		}
-	}
-
-	// Validate and build env
+	// Normalization already validated fields and effective defaults.
 	for _, input := range task.Input {
 		value := payload[input.Name]
-		if err := input.Validate(value); err != nil {
-			return nil, err
-		}
 		if input.Env != "" {
 			env[input.Env] = input.GetEnvValue(value)
 		}
