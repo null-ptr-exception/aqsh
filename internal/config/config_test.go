@@ -10,6 +10,8 @@ import (
 func TestLoad(t *testing.T) {
 	// Clear any existing env vars
 	envVars := []string{
+		"AQSH_AUTH_MODE",
+		"AQSH_AUTH_CONFIG",
 		"AQSH_MODE",
 		"AQSH_BIND",
 		"AQSH_TASKS_CONFIG",
@@ -131,6 +133,28 @@ func TestLoad(t *testing.T) {
 			t.Errorf("expected SentinelMaster 'mymaster', got %q", cfg.Redis.SentinelMaster)
 		}
 	})
+}
+
+func TestValidateAuthenticationMode(t *testing.T) {
+	for _, tc := range []struct {
+		mode, authMode, path string
+		valid                bool
+	}{
+		{"both", "trusted-header", "", true},
+		{"api", "kubernetes", "/auth.yaml", true},
+		{"both", "kubernetes", "/auth.yaml", false},
+		{"api", "kubernetes", "", false},
+		{"api", "trusted-header", "/auth.yaml", false},
+		{"api", "typo", "", false},
+		{"typo", "trusted-header", "", false},
+		// A worker never loads authentication configuration or credentials.
+		{"worker", "kubernetes", "/not-mounted/auth.yaml", true},
+	} {
+		cfg := &Config{Mode: tc.mode, AuthMode: tc.authMode, AuthConfig: tc.path}
+		if err := cfg.Validate(); (err == nil) != tc.valid {
+			t.Errorf("%+v: %v", tc, err)
+		}
+	}
 }
 
 func TestGetEnvInt(t *testing.T) {

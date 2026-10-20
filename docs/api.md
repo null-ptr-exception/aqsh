@@ -1,5 +1,10 @@
 # API Reference
 
+Authentication modes are described in [authentication.md](authentication.md).
+Native Kubernetes mode requires a bearer token on every route except exact
+`GET /health` and `GET /metrics`; forwarded identity headers are ignored.
+Authentication does not change the existing execution read policy.
+
 ## Task Definitions
 
 ### GET /tasks - List All Task Definitions

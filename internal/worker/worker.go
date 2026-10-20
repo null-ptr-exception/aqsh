@@ -17,6 +17,7 @@ import (
 
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
+	"github.com/rophy/aqsh/internal/auth"
 	"github.com/rophy/aqsh/internal/config"
 	"github.com/rophy/aqsh/internal/logs"
 	"github.com/rophy/aqsh/internal/tasks"
@@ -25,6 +26,7 @@ import (
 const TaskType = "aqsh:job"
 
 type TaskPayload struct {
+	Principal *auth.Principal   `json:"principal,omitempty"`
 	Name      string            `json:"name"`
 	CreatedAt time.Time         `json:"created_at"`
 	Identity  string            `json:"identity,omitempty"`

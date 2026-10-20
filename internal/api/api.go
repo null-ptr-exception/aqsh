@@ -16,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
+	"github.com/rophy/aqsh/internal/auth"
 	"github.com/rophy/aqsh/internal/config"
 	"github.com/rophy/aqsh/internal/logs"
 	"github.com/rophy/aqsh/internal/tasks"
@@ -23,14 +24,14 @@ import (
 )
 
 type Server struct {
-	cfg        *config.Config
-	tasks      *tasks.TasksConfig
-	client     *asynq.Client
-	inspector  *asynq.Inspector
-	logStream  *logs.LogStreamer
-	rdb        redis.UniversalClient
-	version    string
-	valCache   *valuesCache
+	cfg       *config.Config
+	tasks     *tasks.TasksConfig
+	client    *asynq.Client
+	inspector *asynq.Inspector
+	logStream *logs.LogStreamer
+	rdb       redis.UniversalClient
+	version   string
+	valCache  *valuesCache
 }
 
 func New(cfg *config.Config, tasksConfig *tasks.TasksConfig, rdb redis.UniversalClient, asynqOpt asynq.RedisConnOpt, version string) *Server {
@@ -77,10 +78,10 @@ func (s *Server) accessLog(next http.Handler) http.Handler {
 			slog.Int("status", sw.status),
 			slog.String("duration", time.Since(start).String()),
 		}
-		if identity := r.Header.Get(s.cfg.IdentityHeader); identity != "" {
+		if identity, _ := s.caller(r); identity != "" {
 			attrs = append(attrs, slog.String("user", identity))
 		}
-		if groups := r.Header.Get(s.cfg.GroupsHeader); groups != "" {
+		if _, groups := s.caller(r); groups != "" {
 			attrs = append(attrs, slog.String("groups", groups))
 		}
 		level := slog.LevelInfo
@@ -92,6 +93,22 @@ func (s *Server) accessLog(next http.Handler) http.Handler {
 }
 
 func (s *Server) Run(ctx context.Context) error {
+	if err := s.cfg.Validate(); err != nil {
+		return err
+	}
+	var authenticator auth.Authenticator
+	if s.cfg.AuthMode == "kubernetes" {
+		cfg, err := auth.Load(s.cfg.AuthConfig)
+		if err != nil {
+			return fmt.Errorf("loading authentication config: %w", err)
+		}
+		kube, err := auth.New(cfg)
+		if err != nil {
+			return fmt.Errorf("configuring authentication: %w", err)
+		}
+		defer kube.Close()
+		authenticator = kube
+	}
 	// Ensure all configured queues are registered in Redis
 	// This is needed for Inspector.GetTaskInfo to work
 	for _, q := range s.cfg.WorkerQueues {
@@ -103,24 +120,12 @@ func (s *Server) Run(ctx context.Context) error {
 	queueMetrics := asynqmetrics.NewQueueMetricsCollector(s.inspector)
 	prometheus.MustRegister(queueMetrics)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /tasks/{name}", s.handleSubmitTask)
-	mux.HandleFunc("GET /tasks/{name}", s.handleGetTaskDef)
-	mux.HandleFunc("GET /tasks", s.handleListTasks)
-	mux.HandleFunc("GET /executions/{id}", s.handleGetExecution)
-	mux.HandleFunc("GET /executions/{id}/logs", s.handleGetLogs)
-	mux.HandleFunc("GET /health", s.handleHealth)
-	mux.Handle("GET /metrics", promhttp.Handler())
-
-	// Coverage endpoint - only available when GOCOVERDIR is set
-	if coverDir := os.Getenv("GOCOVERDIR"); coverDir != "" {
-		mux.HandleFunc("POST /debug/coverage/flush", s.handleCoverageFlush)
-		slog.Info("coverage endpoint enabled", "cover_dir", coverDir)
-	}
+	handler := s.handler(authenticator)
 
 	srv := &http.Server{
-		Addr:    s.cfg.Bind,
-		Handler: s.accessLog(mux),
+		Addr:              s.cfg.Bind,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	go func() {
@@ -137,7 +142,7 @@ func (s *Server) Run(ctx context.Context) error {
 func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 	taskName := r.PathValue("name")
 
-	identity := r.Header.Get(s.cfg.IdentityHeader)
+	identity, groups := s.caller(r)
 	if s.cfg.RequireIdentity && identity == "" {
 		s.jsonError(w, http.StatusUnauthorized, "identity header required")
 		return
@@ -150,10 +155,13 @@ func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Authorization: allowed_users OR allowed_groups
-	groups := r.Header.Get(s.cfg.GroupsHeader)
 	if len(taskDef.AllowedUsers) > 0 || len(taskDef.AllowedGroups) > 0 {
 		userOK := len(taskDef.AllowedUsers) > 0 && isAllowedUser(identity, taskDef.AllowedUsers)
-		groupOK := len(taskDef.AllowedGroups) > 0 && hasAnyGroup(splitGroups(groups), taskDef.AllowedGroups)
+		verifiedGroups := splitGroups(groups)
+		if p, ok := auth.FromContext(r.Context()); ok {
+			verifiedGroups = p.Groups
+		}
+		groupOK := len(taskDef.AllowedGroups) > 0 && hasAnyGroup(verifiedGroups, taskDef.AllowedGroups)
 		if !userOK && !groupOK {
 			s.jsonError(w, http.StatusForbidden, "not authorized for this task")
 			return
@@ -220,6 +228,9 @@ func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 		Env:       env,
 		Payload:   payload,
 	}
+	if principal, ok := auth.FromContext(r.Context()); ok {
+		taskPayload.Principal = &principal
+	}
 	taskBytes, _ := json.Marshal(taskPayload)
 
 	task := asynq.NewTask(worker.TaskType, taskBytes,
@@ -253,8 +264,7 @@ func (s *Server) handleGetTaskDef(w http.ResponseWriter, r *http.Request) {
 
 	result := serializeTaskDef(taskDef)
 
-	identity := r.Header.Get(s.cfg.IdentityHeader)
-	groups := r.Header.Get(s.cfg.GroupsHeader)
+	identity, groups := s.caller(r)
 	if identity != "" || groups != "" {
 		inputs := result["input"].([]map[string]any)
 		for _, m := range inputs {
@@ -606,4 +616,38 @@ func stateToStatus(state asynq.TaskState) string {
 	default:
 		return strings.ToLower(state.String())
 	}
+}
+
+// caller preserves legacy header behavior only in trusted-header mode.
+func (s *Server) caller(r *http.Request) (string, string) {
+	if p, ok := auth.FromContext(r.Context()); ok {
+		return p.Username, strings.Join(p.Groups, ",")
+	}
+	if s.cfg.AuthMode == "kubernetes" {
+		return "", ""
+	}
+	return r.Header.Get(s.cfg.IdentityHeader), r.Header.Get(s.cfg.GroupsHeader)
+}
+
+func (s *Server) handler(authenticator auth.Authenticator) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /tasks/{name}", s.handleSubmitTask)
+	mux.HandleFunc("GET /tasks/{name}", s.handleGetTaskDef)
+	mux.HandleFunc("GET /tasks", s.handleListTasks)
+	mux.HandleFunc("GET /executions/{id}", s.handleGetExecution)
+	mux.HandleFunc("GET /executions/{id}/logs", s.handleGetLogs)
+	mux.HandleFunc("GET /health", s.handleHealth)
+	mux.Handle("GET /metrics", promhttp.Handler())
+
+	// Coverage endpoint - only available when GOCOVERDIR is set
+	if coverDir := os.Getenv("GOCOVERDIR"); coverDir != "" {
+		mux.HandleFunc("POST /debug/coverage/flush", s.handleCoverageFlush)
+		slog.Info("coverage endpoint enabled", "cover_dir", coverDir)
+	}
+
+	var handler http.Handler = s.accessLog(mux)
+	if authenticator != nil {
+		handler = auth.Middleware(authenticator, s.cfg.IdentityHeader, s.cfg.GroupsHeader, handler)
+	}
+	return handler
 }

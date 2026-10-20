@@ -363,6 +363,8 @@ If client disconnects and reconnects:
 | `AQSH_REDIS_PASSWORD` | Redis password | - |
 | `AQSH_WORKER_CONCURRENCY` | Concurrent tasks per worker | `10` |
 | `AQSH_WORKER_QUEUES` | Queues to process (comma-separated) | `default` |
+| `AQSH_AUTH_MODE` | `trusted-header` or `kubernetes` (requires separate API/worker) | `trusted-header` |
+| `AQSH_AUTH_CONFIG` | Native Kubernetes authentication YAML | - |
 | `AQSH_IDENTITY_HEADER` | Header name for user identity | `X-Forwarded-User` |
 | `AQSH_REQUIRE_IDENTITY` | Require identity header (401 if missing) | `false` |
 | `AQSH_GROUPS_HEADER` | Header name for user groups | `X-Forwarded-Groups` |
@@ -422,7 +424,10 @@ Not in scope for initial release, but possible future additions:
 
 ## Authorization
 
-aqsh supports identity tracking and per-task group authorization via HTTP headers, designed for use with an authenticating reverse proxy (e.g., [kube-auth-proxy](https://github.com/rophy/kube-auth-proxy)).
+aqsh supports native Kubernetes TokenReview authentication and identity tracking with
+per-task user/group authorization. Existing authenticating proxy deployments keep
+their header-based behavior by default. See [authentication](docs/authentication.md)
+for native mode, credential separation, and migration.
 
 ### Identity Tracking
 

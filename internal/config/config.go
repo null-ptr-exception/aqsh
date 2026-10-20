@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"strconv"
@@ -9,6 +10,8 @@ import (
 )
 
 type Config struct {
+	AuthMode          string
+	AuthConfig        string
 	Mode              string
 	Bind              string
 	TasksConfig       string
@@ -39,6 +42,8 @@ func (r RedisConfig) IsSentinel() bool {
 
 func Load() *Config {
 	return &Config{
+		AuthMode:          getEnv("AQSH_AUTH_MODE", "trusted-header"),
+		AuthConfig:        getEnv("AQSH_AUTH_CONFIG", ""),
 		Mode:              getEnv("AQSH_MODE", "both"),
 		Bind:              getEnv("AQSH_BIND", "0.0.0.0:8080"),
 		TasksConfig:       getEnv("AQSH_TASKS_CONFIG", "/etc/aqsh/tasks.yaml"),
@@ -109,4 +114,32 @@ func getEnvDuration(key string, defaultVal time.Duration) time.Duration {
 		}
 	}
 	return defaultVal
+}
+
+// Validate prevents loading reviewer credentials into a process that runs tasks.
+func (c *Config) Validate() error {
+	switch c.Mode {
+	case "api", "worker", "both":
+	default:
+		return fmt.Errorf("invalid mode %q", c.Mode)
+	}
+	if c.Mode == "worker" {
+		return nil
+	}
+	switch c.AuthMode {
+	case "", "trusted-header":
+		if c.AuthConfig != "" {
+			return fmt.Errorf("AQSH_AUTH_CONFIG requires AQSH_AUTH_MODE=kubernetes")
+		}
+	case "kubernetes":
+		if c.Mode != "api" {
+			return fmt.Errorf("Kubernetes authentication requires AQSH_MODE=api and a separate worker")
+		}
+		if c.AuthConfig == "" {
+			return fmt.Errorf("AQSH_AUTH_CONFIG is required")
+		}
+	default:
+		return fmt.Errorf("unknown AQSH_AUTH_MODE %q", c.AuthMode)
+	}
+	return nil
 }
