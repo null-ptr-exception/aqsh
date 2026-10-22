@@ -1,17 +1,16 @@
 package auth
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"slices"
 	"strings"
+
+	proxy "github.com/rophy/aqsh/internal/kubeauthproxy"
 )
 
 type Kubernetes struct {
@@ -19,27 +18,7 @@ type Kubernetes struct {
 	config    ClusterConfig
 	audiences []string
 	client    *http.Client
-}
-
-type tokenReview struct {
-	APIVersion string `json:"apiVersion"`
-	Kind       string `json:"kind"`
-	Spec       struct {
-		Token     string   `json:"token"`
-		Audiences []string `json:"audiences"`
-	} `json:"spec"`
-	Status struct {
-		Authenticated bool     `json:"authenticated"`
-		Audiences     []string `json:"audiences"`
-		User          userInfo `json:"user"`
-		Error         string   `json:"error"`
-	} `json:"status,omitempty"`
-}
-
-type userInfo struct {
-	Username string   `json:"username"`
-	UID      string   `json:"uid"`
-	Groups   []string `json:"groups"`
+	reviewer  proxy.TokenReviewer
 }
 
 func New(cfg Config) (*Kubernetes, error) {
@@ -56,6 +35,7 @@ func New(cfg Config) (*Kubernetes, error) {
 			return nil, fmt.Errorf("cluster %q: %w", id, err)
 		}
 		k.cluster, k.config, k.client = id, cluster, client
+		k.reviewer = proxy.NewHTTPTokenReviewer(strings.TrimRight(cluster.APIServer, "/")+"/apis/authentication.k8s.io/v1/tokenreviews", client, cluster.TokenFile, k.audiences)
 	}
 	return k, nil
 }
@@ -96,30 +76,8 @@ func readToken(path string) (string, error) {
 }
 
 func (k *Kubernetes) Authenticate(ctx context.Context, token string) (Principal, error) {
-	reviewer, err := readToken(k.config.TokenFile)
+	result, err := k.reviewer.Review(ctx, token)
 	if err != nil {
-		return Principal{}, ErrUnavailable
-	}
-	tr := tokenReview{APIVersion: "authentication.k8s.io/v1", Kind: "TokenReview"}
-	tr.Spec.Token, tr.Spec.Audiences = token, k.audiences
-	body, _ := json.Marshal(tr)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(k.config.APIServer, "/")+"/apis/authentication.k8s.io/v1/tokenreviews", bytes.NewReader(body))
-	if err != nil {
-		return Principal{}, ErrUnavailable
-	}
-	req.Header.Set("Authorization", "Bearer "+reviewer)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := k.client.Do(req)
-	if err != nil {
-		return Principal{}, ErrUnavailable
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return Principal{}, ErrUnavailable
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
-	var result tokenReview
-	if err != nil || len(data) > 1<<20 || json.Unmarshal(data, &result) != nil {
 		return Principal{}, ErrUnavailable
 	}
 	status := result.Status

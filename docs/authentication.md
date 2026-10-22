@@ -1,5 +1,11 @@
 # Authentication
 
+The TokenReview implementation and its original tests are ported from
+[kube-auth-proxy 0.4.1](https://github.com/rophy/kube-auth-proxy/tree/bdc304cba135e919b9c95f4d7515958dec9624c5).
+See [source provenance](../internal/kubeauthproxy/UPSTREAM.md) for the pinned
+revision and the small embedding changes. aqsh owns the request middleware,
+Principal mapping and task authorization; it calls the existing TokenReview client.
+
 aqsh supports two explicit authentication modes. Existing deployments keep
 `AQSH_AUTH_MODE=trusted-header` by default. In that mode, an authenticating proxy
 must be the only caller able to reach the API; aqsh trusts its configured identity

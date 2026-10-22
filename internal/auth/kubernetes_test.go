@@ -159,3 +159,24 @@ func TestLoadAndValidate(t *testing.T) {
 		t.Fatal("unknown config field accepted")
 	}
 }
+
+type tokenReview struct {
+	APIVersion string `json:"apiVersion"`
+	Kind       string `json:"kind"`
+	Spec       struct {
+		Token     string   `json:"token"`
+		Audiences []string `json:"audiences"`
+	} `json:"spec"`
+	Status struct {
+		Authenticated bool     `json:"authenticated"`
+		Audiences     []string `json:"audiences"`
+		User          userInfo `json:"user"`
+		Error         string   `json:"error"`
+	} `json:"status,omitempty"`
+}
+
+type userInfo struct {
+	Username string   `json:"username"`
+	UID      string   `json:"uid"`
+	Groups   []string `json:"groups"`
+}
