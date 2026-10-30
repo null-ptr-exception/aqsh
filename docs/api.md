@@ -97,7 +97,7 @@ The identity header (default `X-Forwarded-User`, configurable via `AQSH_IDENTITY
 
 **Authorization:**
 
-Tasks can restrict access using `allowed_users` and/or `allowed_groups` in their config. If either matches, the request is authorized (OR logic). `allowed_users` matches against the identity header; `allowed_groups` matches against the groups header (comma-separated). If neither is configured, the task is open to all.
+Tasks can restrict access using `allowed_users` and/or `allowed_groups` in their config. If either matches, the request is authorized (OR logic). In trusted-header mode, `allowed_users` matches the configured identity header and `allowed_groups` matches the groups header (comma-separated). In native mode, both use the verified TokenReview identity and groups; optional cluster qualification changes the user identity as described in [authentication](authentication.md#identity-and-task-authorization). If neither is configured, the task is open to all.
 
 Inputs with `values_url` perform additional per-parameter authorization: the remote URL is fetched with user context, and the submitted value must be in the returned list.
 

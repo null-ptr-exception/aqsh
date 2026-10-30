@@ -49,7 +49,7 @@ func TestMiddleware(t *testing.T) {
 					if !ok || p.Username != "verified" || len(p.Groups) != 0 {
 						t.Fatal("untrusted identity reached handler")
 					}
-					for _, header := range []string{"Authorization", "Custom-User", "Custom-Groups", "X-Forwarded-User", "X-Forwarded-Groups", "X-Forwarded-Cluster"} {
+					for _, header := range []string{"Authorization", "Custom-User", "Custom-Groups", "X-Forwarded-User", "X-Forwarded-Groups", "X-Forwarded-Cluster", "X-Forwarded-Extra-Cluster-Name"} {
 						if r.Header.Get(header) != "" {
 							t.Fatalf("header %s survived", header)
 						}
@@ -58,7 +58,7 @@ func TestMiddleware(t *testing.T) {
 				w.WriteHeader(204)
 			}))
 			r := httptest.NewRequest(tc.method, tc.path, nil)
-			for _, header := range []string{"Custom-User", "Custom-Groups", "X-Forwarded-User", "X-Forwarded-Groups", "X-Forwarded-Cluster"} {
+			for _, header := range []string{"Custom-User", "Custom-Groups", "X-Forwarded-User", "X-Forwarded-Groups", "X-Forwarded-Cluster", "X-Forwarded-Extra-Cluster-Name"} {
 				r.Header.Set(header, "forged")
 			}
 			if tc.authorization != "" {

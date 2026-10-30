@@ -15,8 +15,12 @@ var (
 )
 
 // Principal contains verified identity only. It never contains bearer credentials.
-// Cluster is an operator-assigned trust domain, not a token-supplied claim.
+// Cluster comes from the trusted TokenReview response or configured fallback,
+// never from caller headers or unverified token claims.
 type Principal struct {
+	// Identity is set only when cluster-qualified task identity is enabled.
+	// Username always retains the username returned by TokenReview.
+	Identity string   `json:"identity,omitempty"`
 	Provider string   `json:"provider"`
 	Cluster  string   `json:"cluster"`
 	Username string   `json:"username"`
@@ -45,7 +49,7 @@ func Middleware(a Authenticator, identityHeader, groupsHeader string, next http.
 			return
 		}
 		values := r.Header.Values("Authorization")
-		for _, name := range []string{identityHeader, groupsHeader, "X-Forwarded-User", "X-Forwarded-Groups", "X-Forwarded-Cluster"} {
+		for _, name := range []string{identityHeader, groupsHeader, "X-Forwarded-User", "X-Forwarded-Groups", "X-Forwarded-Cluster", "X-Forwarded-Extra-Cluster-Name"} {
 			r.Header.Del(name)
 		}
 		r.Header.Del("Authorization")

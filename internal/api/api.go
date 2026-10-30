@@ -621,7 +621,11 @@ func stateToStatus(state asynq.TaskState) string {
 // caller preserves legacy header behavior only in trusted-header mode.
 func (s *Server) caller(r *http.Request) (string, string) {
 	if p, ok := auth.FromContext(r.Context()); ok {
-		return p.Username, strings.Join(p.Groups, ",")
+		identity := p.Identity
+		if identity == "" {
+			identity = p.Username
+		}
+		return identity, strings.Join(p.Groups, ",")
 	}
 	if s.cfg.AuthMode == "kubernetes" {
 		return "", ""

@@ -144,7 +144,7 @@ func TestLoadAndValidate(t *testing.T) {
 		t.Fatalf("config=%+v err=%v", cfg, err)
 	}
 	for _, raw := range []string{"http://api", "https://user:password@api", "https://api?query", "https://api/#fragment", "not a URL"} {
-		if validEndpoint(raw) {
+		if validEndpoint(raw, false) {
 			t.Fatalf("accepted endpoint %s", raw)
 		}
 	}
@@ -158,25 +158,4 @@ func TestLoadAndValidate(t *testing.T) {
 	if _, err := Load(path); err == nil {
 		t.Fatal("unknown config field accepted")
 	}
-}
-
-type tokenReview struct {
-	APIVersion string `json:"apiVersion"`
-	Kind       string `json:"kind"`
-	Spec       struct {
-		Token     string   `json:"token"`
-		Audiences []string `json:"audiences"`
-	} `json:"spec"`
-	Status struct {
-		Authenticated bool     `json:"authenticated"`
-		Audiences     []string `json:"audiences"`
-		User          userInfo `json:"user"`
-		Error         string   `json:"error"`
-	} `json:"status,omitempty"`
-}
-
-type userInfo struct {
-	Username string   `json:"username"`
-	UID      string   `json:"uid"`
-	Groups   []string `json:"groups"`
 }

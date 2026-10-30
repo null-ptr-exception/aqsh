@@ -6,17 +6,20 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
-	Audiences      []string                 `yaml:"audiences"`
-	RequestTimeout time.Duration            `yaml:"request_timeout"`
-	Clusters       map[string]ClusterConfig `yaml:"clusters"`
+	IncludeClusterInIdentity bool                     `yaml:"include_cluster_in_identity"`
+	Audiences                []string                 `yaml:"audiences"`
+	RequestTimeout           time.Duration            `yaml:"request_timeout"`
+	Clusters                 map[string]ClusterConfig `yaml:"clusters"`
 }
 
 type ClusterConfig struct {
+	AllowHTTP bool   `yaml:"allow_http"`
 	APIServer string `yaml:"api_server"`
 	CAFile    string `yaml:"ca_file"`
 	TokenFile string `yaml:"token_file"`
@@ -53,20 +56,27 @@ func (c *Config) validate() error {
 		return fmt.Errorf("request_timeout must be between 1ms and 1m")
 	}
 	if len(c.Clusters) != 1 {
-		return fmt.Errorf("exactly one cluster is required")
+		return fmt.Errorf("exactly one TokenReview endpoint is required")
 	}
 	for id, cluster := range c.Clusters {
-		if strings.TrimSpace(id) != id || id == "" || cluster.TokenFile == "" {
-			return fmt.Errorf("each cluster requires a stable ID and token_file")
+		if !validClusterName(id) || cluster.TokenFile == "" {
+			return fmt.Errorf("each endpoint requires a stable fallback cluster ID and token_file")
 		}
-		if !validEndpoint(cluster.APIServer) {
-			return fmt.Errorf("cluster %q requires an HTTPS api_server without credentials, query or fragment", id)
+		if !validEndpoint(cluster.APIServer, cluster.AllowHTTP) {
+			return fmt.Errorf("cluster %q requires an HTTPS api_server (or explicit allow_http) without credentials, query or fragment", id)
 		}
 	}
 	return nil
 }
 
-func validEndpoint(raw string) bool {
+func validEndpoint(raw string, allowHTTP bool) bool {
 	u, err := url.Parse(raw)
-	return err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil && u.RawQuery == "" && u.Fragment == ""
+	return err == nil && (u.Scheme == "https" || allowHTTP && u.Scheme == "http") && u.Host != "" && u.User == nil && u.RawQuery == "" && !u.ForceQuery && u.Fragment == "" && !strings.Contains(raw, "#")
+}
+
+// Cluster names are a single identity segment when qualification is enabled.
+func validClusterName(name string) bool {
+	return name != "" && strings.IndexFunc(name, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsControl(r) || r == '/' || r == '\\'
+	}) == -1
 }

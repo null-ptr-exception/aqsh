@@ -364,7 +364,7 @@ If client disconnects and reconnects:
 | `AQSH_WORKER_CONCURRENCY` | Concurrent tasks per worker | `10` |
 | `AQSH_WORKER_QUEUES` | Queues to process (comma-separated) | `default` |
 | `AQSH_AUTH_MODE` | `trusted-header` or `kubernetes` (requires separate API/worker) | `trusted-header` |
-| `AQSH_AUTH_CONFIG` | Native Kubernetes authentication YAML | - |
+| `AQSH_AUTH_CONFIG` | Kubernetes or external TokenReview authentication YAML | - |
 | `AQSH_IDENTITY_HEADER` | Header name for user identity | `X-Forwarded-User` |
 | `AQSH_REQUIRE_IDENTITY` | Require identity header (401 if missing) | `false` |
 | `AQSH_GROUPS_HEADER` | Header name for user groups | `X-Forwarded-Groups` |
@@ -424,7 +424,8 @@ Not in scope for initial release, but possible future additions:
 
 ## Authorization
 
-aqsh supports native Kubernetes TokenReview authentication and identity tracking with
+aqsh supports native TokenReview authentication against Kubernetes or an external
+kube-federated-auth service, and identity tracking with
 per-task user/group authorization. Existing authenticating proxy deployments keep
 their header-based behavior by default. See [authentication](docs/authentication.md)
 for native mode, credential separation, and migration.
