@@ -26,15 +26,14 @@ verify:
     image: aqsh-test
     env:
     - name: AQSH_URL
-      value: http://aqsh.aqsh.svc.cluster.local:8080
+      value: http://aqsh:8080
   executionMode:
     kubernetesCluster: {}
 
 manifests:
-  rawYaml:
-  - k8s/namespace.yaml
-  - k8s/redis.yaml
-  - k8s/aqsh.yaml
+  kustomize:
+    paths:
+    - .
 
 profiles:
 - name: remote

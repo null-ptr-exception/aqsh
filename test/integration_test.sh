@@ -3,7 +3,7 @@
 # Usage: ./test/integration_test.sh
 #
 # Prerequisites:
-#   - docker compose up -d (or run aqsh with redis)
+#   - ./test/e2e.sh <disposable-kube-context> (Skaffold), or aqsh with Redis
 #   - aqsh server running on localhost:8080
 
 set -e
@@ -135,10 +135,10 @@ test_submit_task_success() {
     if echo "$RESP" | grep -q '"id"'; then
         TASK_ID=$(echo "$RESP" | grep -o '"id":"[^"]*"' | cut -d'"' -f4)
         pass "POST /tasks/hello returns task ID: $TASK_ID"
-        echo "$TASK_ID"
+        SUCCESS_TASK_ID=$TASK_ID
     else
         fail "POST /tasks/hello returns task ID" '{"id":"..."}' "$RESP"
-        echo ""
+        SUCCESS_TASK_ID=""
     fi
 }
 
@@ -699,7 +699,7 @@ test_cascading_values_url
 
 echo "" >&2
 echo "--- Task Execution Tests ---" >&2
-SUCCESS_TASK_ID=$(test_submit_task_success)
+test_submit_task_success
 
 if [ -n "$SUCCESS_TASK_ID" ]; then
     test_get_task_success "$SUCCESS_TASK_ID"
