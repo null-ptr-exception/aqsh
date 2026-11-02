@@ -24,15 +24,33 @@ jobs:
 
   integration:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SKAFFOLD_VERSION: v2.25.0
+      KIND_VERSION: v0.31.0
+      KUBECONFIG: ${{ runner.temp }}/aqsh-e2e.kubeconfig
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - run: docker compose --profile dev up --build -d
+      - name: Install Kubernetes test tools
+        run: |
+          curl -fsSL "https://github.com/GoogleContainerTools/skaffold/releases/download/${SKAFFOLD_VERSION}/skaffold-linux-amd64" -o skaffold
+          curl -fsSL "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" -o kind
+          curl -fsSL https://dl.k8s.io/release/v1.33.7/bin/linux/amd64/kubectl -o kubectl
+          chmod +x skaffold kind kubectl
+          sudo mv skaffold kind kubectl /usr/local/bin/
 
-      - run: docker compose --profile dev run --rm dev ./test/integration_test.sh
+      - name: Create disposable Kubernetes cluster
+        run: |
+          kind create cluster --name aqsh-e2e --wait 120s \
+            --image kindest/node:v1.33.7@sha256:d26ef333bdb2cbe9862a0f7c3803ecc7b4303d8cea8e814b481b09949d353040
 
-      - if: always()
-        run: docker compose --profile dev down
+      - name: Run Skaffold E2E
+        run: ./test/e2e.sh kind-aqsh-e2e
+
+      - name: Delete test cluster
+        if: always()
+        run: kind delete cluster --name aqsh-e2e
 
   build:
     runs-on: ubuntu-latest

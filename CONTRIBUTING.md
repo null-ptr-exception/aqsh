@@ -38,26 +38,35 @@ docker compose --profile dev run --rm dev ./test/integration_test.sh
 docker compose down
 ```
 
-## Kubernetes Development (Skaffold)
+## Kubernetes Development and E2E (Skaffold)
+
+CI runs the existing shell integration suite against a disposable Kind cluster
+using Skaffold. Install Docker, Kind v0.31.0, kubectl v1.33.x and Skaffold v2.25.0
+to reproduce it locally:
 
 ```bash
-# Deploy to Kubernetes
-skaffold run
-
-# Deploy and run integration tests
-skaffold build -q | skaffold verify --build-artifacts -
-
-# Deploy with live reload (development mode)
-skaffold dev
-
-# Clean up
-skaffold delete
+kind create cluster --name aqsh-e2e --wait 120s \
+  --image kindest/node:v1.33.7@sha256:d26ef333bdb2cbe9862a0f7c3803ecc7b4303d8cea8e814b481b09949d353040
+./test/e2e.sh kind-aqsh-e2e
+kind delete cluster --name aqsh-e2e
 ```
 
-The integration tests run as a Kubernetes Job using `skaffold verify`, which:
-- Builds the test container (`Dockerfile.test`)
-- Deploys it to the cluster
-- Streams test output and reports pass/fail status
+`test/e2e.sh` requires an explicit context and an absent `aqsh` namespace. It builds
+the application and test images, deploys Redis, aqsh and the mock values service,
+then runs the test container as a Kubernetes Job with `skaffold verify`. A failing
+test fails the command. The script reports diagnostics on failure and removes the
+test resources on exit; it refuses to use an existing `aqsh` namespace.
+
+Kustomize generates ConfigMaps from `tasks.yaml`, `tasks.d/test.yaml`, `tasks/`
+and the existing mock values server, so Compose and Kubernetes use the same test
+fixtures. Docker Compose remains available for local development.
+
+For an interactive development cluster, pass the context and namespace explicitly:
+
+```bash
+skaffold dev --kube-context kind-aqsh-dev --namespace aqsh
+skaffold delete --kube-context kind-aqsh-dev --namespace aqsh
+```
 
 ## Running Tests
 
