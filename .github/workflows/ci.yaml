@@ -28,7 +28,7 @@ jobs:
     env:
       SKAFFOLD_VERSION: v2.25.0
       KIND_VERSION: v0.31.0
-      KUBECONFIG: ${{ runner.temp }}/aqsh-e2e.kubeconfig
+      KUBECONFIG: /tmp/aqsh-e2e.kubeconfig
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
