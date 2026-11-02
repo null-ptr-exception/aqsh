@@ -82,6 +82,25 @@ prints its `coverage.out` path. Missing pods, failed flush/copy, missing binary
 coverage data, or covdata conversion errors fail the command. Coverage is currently
 supported for the baseline suite, not in combination with additional test profiles.
 
+## Native TokenReview E2E
+
+Both native modes use the same runner and the cluster's real TokenReview API:
+
+```bash
+make test-e2e KUBE_CONTEXT=kind-aqsh-e2e E2E_ARGS="--profile native-auth"
+make test-e2e KUBE_CONTEXT=kind-aqsh-e2e E2E_ARGS="--profile native-auth,qualified-identity"
+```
+
+The profiles use separate reviewer/caller ServiceAccounts, projected tokens with
+valid and wrong audiences, and a worker without reviewer credentials. The driver
+checks forged headers, user/group ACLs, live ServiceAccount UID in Redis, worker
+identity, execution results and SSE logs. Both overlays include the namespace for
+Skaffold deployment and cleanup. Coverage collection is baseline-only.
+
+These tests exercise a real single-cluster API; kube-federated-auth and execution
+ownership isolation are outside their scope. Ordinary `go test ./...` skips the
+in-cluster driver unless `AQSH_NATIVE_E2E_URL` is set.
+
 ## Running Checks
 
 ```bash

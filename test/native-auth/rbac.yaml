@@ -1,0 +1,58 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aqsh-api-reviewer
+  namespace: aqsh
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aqsh-e2e-tokenreview
+rules:
+- apiGroups: [authentication.k8s.io]
+  resources: [tokenreviews]
+  verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aqsh-e2e-tokenreview
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: aqsh-e2e-tokenreview
+subjects:
+- kind: ServiceAccount
+  name: aqsh-api-reviewer
+  namespace: aqsh
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aqsh-e2e-caller
+  namespace: aqsh
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aqsh-e2e-read-caller
+  namespace: aqsh
+rules:
+- apiGroups: ['']
+  resources: [serviceaccounts]
+  resourceNames: [aqsh-e2e-caller]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aqsh-e2e-read-caller
+  namespace: aqsh
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aqsh-e2e-read-caller
+subjects:
+- kind: ServiceAccount
+  name: aqsh-e2e-caller
+  namespace: aqsh

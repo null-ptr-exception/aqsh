@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aqsh
+  namespace: aqsh
+spec:
+  template:
+    spec:
+      serviceAccountName: aqsh-api-reviewer
+      containers:
+      - name: aqsh
+        env:
+        - name: AQSH_MODE
+          value: api
+        - name: AQSH_AUTH_MODE
+          value: kubernetes
+        - name: AQSH_AUTH_CONFIG
+          value: /etc/aqsh/auth/auth.yaml
+        volumeMounts:
+        - name: native-auth
+          mountPath: /etc/aqsh/auth
+          readOnly: true
+      volumes:
+      - name: tasks-config
+        configMap:
+          name: aqsh-native-tasks
+      - name: task-scripts
+        configMap:
+          name: aqsh-native-scripts
+          defaultMode: 0755
+      - name: native-auth
+        configMap:
+          name: aqsh-native-auth

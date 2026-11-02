@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aqsh-worker
+  namespace: aqsh
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aqsh-worker
+  template:
+    metadata:
+      labels:
+        app: aqsh-worker
+    spec:
+      automountServiceAccountToken: false
+      initContainers:
+      - name: wait-for-redis
+        image: busybox:1.36
+        command: [sh, -c, "until nc -z redis 6379; do sleep 1; done"]
+      containers:
+      - name: worker
+        image: aqsh
+        env:
+        - name: AQSH_MODE
+          value: worker
+        - name: AQSH_REDIS_ADDR
+          value: redis:6379
+        volumeMounts:
+        - name: tasks-config
+          mountPath: /etc/aqsh
+          readOnly: true
+        - name: task-scripts
+          mountPath: /tasks
+          readOnly: true
+      volumes:
+      - name: tasks-config
+        configMap:
+          name: aqsh-native-tasks
+      - name: task-scripts
+        configMap:
+          name: aqsh-native-scripts
+          defaultMode: 0755

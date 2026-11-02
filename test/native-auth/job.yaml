@@ -1,0 +1,37 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: aqsh-native-auth-test
+  namespace: aqsh
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 180
+  template:
+    spec:
+      serviceAccountName: aqsh-e2e-caller
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      containers:
+      - name: native-auth-test
+        image: aqsh-native-test
+        volumeMounts:
+        - name: caller-tokens
+          mountPath: /var/run/aqsh-e2e
+          readOnly: true
+      volumes:
+      - name: caller-tokens
+        projected:
+          sources:
+          - serviceAccountToken:
+              path: token
+              audience: aqsh-e2e
+          - serviceAccountToken:
+              path: wrong-audience
+              audience: another-service
+          - serviceAccountToken:
+              path: api-token
+          - configMap:
+              name: kube-root-ca.crt
+              items:
+              - key: ca.crt
+                path: ca.crt

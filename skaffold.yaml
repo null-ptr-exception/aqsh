@@ -63,3 +63,40 @@ profiles:
     path: /build/artifacts/0/docker/buildArgs
     value:
       DEBUG: "true"
+
+- name: native-auth
+  build:
+    artifacts:
+    - image: aqsh
+      docker:
+        dockerfile: Dockerfile
+    - image: aqsh-native-test
+      docker:
+        dockerfile: Dockerfile.native-test
+  manifests:
+    kustomize:
+      paths:
+      - test/native-auth
+  verify:
+  - name: native-auth-test
+    container:
+      name: native-auth-test
+      image: aqsh-native-test
+      env:
+      - name: AQSH_NATIVE_E2E_URL
+        value: http://aqsh:8080
+    executionMode:
+      kubernetesCluster:
+        jobManifestPath: test/native-auth/job.yaml
+
+# Activate together with native-auth to exercise opt-in cluster qualification.
+- name: qualified-identity
+  patches:
+  - op: replace
+    path: /manifests/kustomize/paths/0
+    value: test/qualified-auth
+  - op: add
+    path: /verify/0/container/env/-
+    value:
+      name: AQSH_NATIVE_E2E_QUALIFIED
+      value: "true"
