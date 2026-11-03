@@ -32,6 +32,10 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+
       - name: Install Kubernetes test tools
         run: |
           curl -fsSL "https://github.com/GoogleContainerTools/skaffold/releases/download/${SKAFFOLD_VERSION}/skaffold-linux-amd64" -o skaffold
@@ -40,13 +44,16 @@ jobs:
           chmod +x skaffold kind kubectl
           sudo mv skaffold kind kubectl /usr/local/bin/
 
+      - name: Check E2E harness contracts
+        run: python3 test/e2e_runner_test.py
+
       - name: Create disposable Kubernetes cluster
         run: |
           kind create cluster --name aqsh-e2e --wait 120s \
             --image kindest/node:v1.33.7@sha256:d26ef333bdb2cbe9862a0f7c3803ecc7b4303d8cea8e814b481b09949d353040
 
       - name: Run Skaffold E2E
-        run: ./test/e2e.sh kind-aqsh-e2e
+        run: make test-e2e KUBE_CONTEXT=kind-aqsh-e2e E2E_ARGS=--coverage
 
       - name: Delete test cluster
         if: always()

@@ -381,11 +381,15 @@ If client disconnects and reconnects:
 
 ## Kubernetes Deployment
 
-See [k8s/](k8s/) for example manifests. Deploy with:
+See [k8s/](k8s/) for a complete example, including ConfigMaps. The default
+Skaffold deployment excludes E2E fixtures. Deploy with:
 
 ```bash
-skaffold run
+skaffold run --kube-context kind-aqsh-dev --namespace aqsh
 ```
+
+For the supported Kind/Skaffold E2E and coverage commands, see
+[CONTRIBUTING.md](CONTRIBUTING.md#e2e-and-coverage).
 
 For production, consider separate API and Worker deployments for independent scaling:
 - API pods (`--mode=api`): stateless, scale based on request load

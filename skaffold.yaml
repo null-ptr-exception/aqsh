@@ -12,28 +12,14 @@ build:
   - image: aqsh
     docker:
       dockerfile: Dockerfile
-  - image: aqsh-test
-    docker:
-      dockerfile: Dockerfile.test
 
 deploy:
   kubectl: {}
 
-verify:
-- name: integration-test
-  container:
-    name: integration-test
-    image: aqsh-test
-    env:
-    - name: AQSH_URL
-      value: http://aqsh:8080
-  executionMode:
-    kubernetesCluster: {}
-
 manifests:
   kustomize:
     paths:
-    - .
+    - k8s
 
 profiles:
 - name: remote
@@ -47,13 +33,33 @@ profiles:
       docker:
         dockerfile: Dockerfile
 
-- name: coverage
+- name: e2e
   build:
     artifacts:
     - image: aqsh
       docker:
-        buildArgs:
-          DEBUG: "true"
+        dockerfile: Dockerfile
     - image: aqsh-test
       docker:
         dockerfile: Dockerfile.test
+  manifests:
+    kustomize:
+      paths:
+      - test/fixtures
+  verify:
+  - name: integration-test
+    container:
+      name: integration-test
+      image: aqsh-test
+      env:
+      - name: AQSH_URL
+        value: http://aqsh:8080
+    executionMode:
+      kubernetesCluster: {}
+
+- name: coverage
+  patches:
+  - op: add
+    path: /build/artifacts/0/docker/buildArgs
+    value:
+      DEBUG: "true"

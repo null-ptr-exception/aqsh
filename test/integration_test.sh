@@ -1,10 +1,7 @@
 #!/bin/bash
-# Integration tests for aqsh API
-# Usage: ./test/integration_test.sh
-#
-# Prerequisites:
-#   - ./test/e2e.sh <disposable-kube-context> (Skaffold), or aqsh with Redis
-#   - aqsh server running on localhost:8080
+# API assertions executed by the Skaffold verification Job.
+# Supported runner: make test-e2e KUBE_CONTEXT=kind-<cluster>
+# AQSH_URL is supplied by the e2e profile.
 
 set -e
 

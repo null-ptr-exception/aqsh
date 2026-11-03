@@ -9,8 +9,8 @@ build: ## Build container image (aqsh:latest and rophy/aqsh:<version>)
 test: ## Run Go tests
 	go test ./...
 
-test-e2e: ## Run integration tests with coverage
-	./scripts/run-e2e-test.sh
+test-e2e: ## Run Kind E2E (KUBE_CONTEXT=kind-..., E2E_ARGS=--coverage optional)
+	./test/e2e.sh "$(KUBE_CONTEXT)" $(E2E_ARGS)
 
 run: ## Run aqsh locally in 'both' mode
 	go run ./cmd/aqsh
