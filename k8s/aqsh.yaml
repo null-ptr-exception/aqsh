@@ -1,4 +1,146 @@
 apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aqsh-tasks-config
+  namespace: aqsh
+data:
+  tasks.yaml: |
+    defaults:
+      timeout: 5m
+      max_retry: 3
+      queue: default
+
+    tasks:
+      hello:
+        script: hello.sh
+        description: "Simple hello world test"
+        timeout: 1m
+        max_retry: 0
+        input:
+          - name: name
+            env: NAME
+            required: true
+            type: string
+
+      deploy:
+        script: deploy.sh
+        description: "Deploy application to environment"
+        timeout: 10m
+        max_retry: 2
+        input:
+          - name: version
+            env: VERSION
+            required: true
+            type: string
+            pattern: '^v?\d+\.\d+\.\d+$'
+          - name: environment
+            env: ENVIRONMENT
+            required: true
+            type: string
+            enum: [dev, staging, prod]
+          - name: dry_run
+            env: DRY_RUN
+            required: false
+            type: bool
+            default: "false"
+
+      cleanup:
+        script: cleanup.sh
+        description: "Clean up old resources"
+        queue: long-running
+        timeout: 30m
+        input:
+          - name: older_than_days
+            env: OLDER_THAN_DAYS
+            required: true
+            type: int
+            min: 1
+            max: 365
+
+      slow:
+        script: slow.sh
+        description: "Slow task for testing log streaming"
+        timeout: 1m
+        max_retry: 0
+        input: []
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aqsh-task-scripts
+  namespace: aqsh
+data:
+  hello.sh: |
+    #!/bin/bash
+    set -e
+    echo "Hello, $NAME!"
+    echo "Task ID: $AQSH_TASK_ID"
+    echo "Current time: $(date)"
+    sleep 2
+    echo "Done!"
+
+    # Write structured result to AQSH_RESULT_FILE
+    cat > "$AQSH_RESULT_FILE" << EOF
+    {
+      "greeted": "$NAME",
+      "timestamp": "$(date -Iseconds)"
+    }
+    EOF
+
+  deploy.sh: |
+    #!/bin/bash
+    set -e
+    echo "Deploying version $VERSION to $ENVIRONMENT"
+    if [ "$DRY_RUN" = "true" ]; then
+        echo "[DRY RUN] Would deploy $VERSION to $ENVIRONMENT"
+        # Write result for dry run
+        cat > "$AQSH_RESULT_FILE" << EOF
+    {
+      "status": "dry_run",
+      "version": "$VERSION",
+      "environment": "$ENVIRONMENT"
+    }
+    EOF
+        exit 0
+    fi
+    echo "Pulling image..."
+    sleep 1
+    echo "Scaling replicas..."
+    sleep 1
+    echo "Waiting for rollout..."
+    sleep 1
+    echo "Deployment complete!"
+
+    # Write structured result
+    cat > "$AQSH_RESULT_FILE" << EOF
+    {
+      "status": "deployed",
+      "version": "$VERSION",
+      "environment": "$ENVIRONMENT",
+      "timestamp": "$(date -Iseconds)"
+    }
+    EOF
+
+  cleanup.sh: |
+    #!/bin/bash
+    set -e
+    echo "Cleaning up resources older than $OLDER_THAN_DAYS days"
+    echo "Scanning..."
+    sleep 2
+    echo "Found 0 resources to clean"
+    echo "Done!"
+
+  slow.sh: |
+    #!/bin/bash
+    set -e
+    echo "Starting slow task..."
+    for i in 1 2 3 4 5; do
+        echo "Step $i of 5"
+        sleep 1
+    done
+    echo "Slow task completed!"
+---
+apiVersion: v1
 kind: Service
 metadata:
   name: aqsh
@@ -59,8 +201,6 @@ spec:
         volumeMounts:
         - name: tasks-config
           mountPath: /etc/aqsh
-        - name: tasks-extra
-          mountPath: /etc/aqsh/tasks.d
         - name: task-scripts
           mountPath: /tasks
         resources:
@@ -88,9 +228,6 @@ spec:
       - name: tasks-config
         configMap:
           name: aqsh-tasks-config
-      - name: tasks-extra
-        configMap:
-          name: aqsh-tasks-extra
       - name: task-scripts
         configMap:
           name: aqsh-task-scripts

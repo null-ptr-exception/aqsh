@@ -6,10 +6,11 @@ services:
     build: .
     environment:
       AQSH_MODE: both
+      AQSH_TASKS_CONFIG: /etc/aqsh/e2e-tasks.yaml
       AQSH_REDIS_ADDR: redis:6379
     volumes:
       - ./tasks.yaml:/etc/aqsh/tasks.yaml:ro
-      - ./tasks.d:/etc/aqsh/tasks.d:ro
+      - ./test/fixtures/tasks.yaml:/etc/aqsh/e2e-tasks.yaml:ro
       - ./tasks:/tasks:ro
     depends_on:
       - redis
@@ -18,7 +19,7 @@ services:
     image: python:3-alpine
     command: python /scripts/server.py
     volumes:
-      - ./test/mock-values-server:/scripts:ro
+      - ./test/fixtures/server.py:/scripts/server.py:ro
 
   dev:
     build:

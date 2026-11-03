@@ -2,9 +2,10 @@
 
 ## Prerequisites
 
-- Go 1.21+
+- Go toolchain from `go.mod`
 - Docker / Docker Compose
 - kubectl + Skaffold (for Kubernetes development)
+- Kind, Python 3 and Go (for E2E and coverage)
 
 ## Project Structure
 
@@ -31,52 +32,67 @@ aqsh/
 # Start all services
 docker compose up --build
 
-# Run integration tests
-docker compose --profile dev run --rm dev ./test/integration_test.sh
-
 # Stop services
 docker compose down
 ```
 
-## Kubernetes Development and E2E (Skaffold)
+## Kubernetes Development
 
-CI runs the existing shell integration suite against a disposable Kind cluster
-using Skaffold. Install Docker, Kind v0.31.0, kubectl v1.33.x and Skaffold v2.25.0
-to reproduce it locally:
+`k8s/` is a complete example deployment, including its ConfigMaps. The default
+Skaffold configuration builds and deploys only the example application; test tasks
+and mock services are added only by the `e2e` profile.
+
+```bash
+skaffold dev --kube-context kind-aqsh-dev --namespace aqsh
+# Or apply the complete example directly:
+kubectl --context kind-aqsh-dev --namespace aqsh apply -k k8s
+```
+
+## E2E and Coverage
+
+Kind/Skaffold is the supported E2E path and the path exercised in CI. Compose is
+for local development. Install Kind v0.31.0, kubectl v1.33.x, Skaffold v2.25.0,
+Python 3 and the Go toolchain from `go.mod`.
 
 ```bash
 kind create cluster --name aqsh-e2e --wait 120s \
   --image kindest/node:v1.33.7@sha256:d26ef333bdb2cbe9862a0f7c3803ecc7b4303d8cea8e814b481b09949d353040
-./test/e2e.sh kind-aqsh-e2e
+make test-e2e KUBE_CONTEXT=kind-aqsh-e2e
+make test-e2e KUBE_CONTEXT=kind-aqsh-e2e E2E_ARGS=--coverage
 kind delete cluster --name aqsh-e2e
 ```
 
-`test/e2e.sh` requires an explicit context and an absent `aqsh` namespace. It builds
-the application and test images, deploys Redis, aqsh and the mock values service,
-then runs the test container as a Kubernetes Job with `skaffold verify`. A failing
-test fails the command. The script reports diagnostics on failure and removes the
-test resources on exit; it refuses to use an existing `aqsh` namespace.
+Both Make invocations use `test/e2e.sh`, the only E2E entry point. The runner requires
+a disposable **local Kind** cluster and a `kind-<cluster>` context. It obtains that
+cluster's kubeconfig from Kind rather than trusting a similarly named remote
+context, and leaves the user's kubeconfig unchanged. An existing `aqsh` namespace
+is refused; after building, namespace creation atomically excludes concurrent runs. The runner
+keeps that claim until resource cleanup finishes, then deletes the namespace last.
+The namespace is fixed and must match `k8s/namespace.yaml` and all test overlays;
+the harness contract tests check that agreement. Arbitrary Skaffold flags and
+context/namespace overrides are rejected.
 
-Kustomize generates ConfigMaps from `tasks.yaml`, `tasks.d/test.yaml`, `tasks/`
-and the existing mock values server, so Compose and Kubernetes use the same test
-fixtures. Docker Compose remains available for local development.
+The `e2e` overlay under `test/fixtures/` adds the test task configuration and mock
+values server. Compose uses the same fixtures. Each run builds once, deploys,
+runs the shell suite as a Kubernetes Job, and cleans up its claimed resources.
+Build/preflight failures do not delete existing resources; test failures retain
+their nonzero status through coverage collection and cleanup.
 
-For an interactive development cluster, pass the context and namespace explicitly:
+`--coverage` adds instrumentation and flushes/copies coverage before cleanup, even
+when verification fails. Each run creates a fresh `coverage/e2e.*/` directory and
+prints its `coverage.out` path. Missing pods, failed flush/copy, missing binary
+coverage data, or covdata conversion errors fail the command. Coverage is currently
+supported for the baseline suite, not in combination with additional test profiles.
+
+## Running Checks
 
 ```bash
-skaffold dev --kube-context kind-aqsh-dev --namespace aqsh
-skaffold delete --kube-context kind-aqsh-dev --namespace aqsh
-```
-
-## Running Tests
-
-```bash
-# Unit tests
 go test ./...
-
-# Integration tests (requires running services)
-AQSH_URL=http://localhost:8080 ./test/integration_test.sh
+python3 test/e2e_runner_test.py
 ```
+
+The Python checks use fake CLIs for failure contracts and offline `kubectl kustomize`
+for example/test separation and namespace consistency; they do not deploy a cluster.
 
 ## Releasing
 
