@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One E2E entry point. Requires a disposable local Kind cluster.
+# One E2E entry point. Requires a disposable, single-user local Kind cluster.
 set -euo pipefail
 umask 077
 cd "$(dirname "$0")/.."
@@ -28,24 +28,7 @@ done
 readonly namespace=aqsh
 options=(--kube-context "$context" --namespace "$namespace" --profile "$profiles")
 work=$(mktemp -d)
-claimed=false
-cleanup() {
-    status=$?
-    trap - EXIT
-    if [[ $claimed == true ]]; then
-        if [[ $status -ne 0 ]]; then
-            kubectl --context "$context" --namespace "$namespace" get pods,jobs,deployments -o wide || true
-            kubectl --context "$context" --namespace "$namespace" get events --sort-by=.lastTimestamp || true
-            kubectl --context "$context" --namespace "$namespace" logs -l app --all-containers --prefix --tail=100 || true
-        fi
-        skaffold delete "${options[@]}" || { [[ $status -ne 0 ]] || status=1; }
-        kubectl --context "$context" --namespace "$namespace" delete namespace "$namespace" --wait=false || { [[ $status -ne 0 ]] || status=1; }
-        kubectl --context "$context" --namespace "$namespace" wait --for=delete namespace/"$namespace" --timeout=120s || { [[ $status -ne 0 ]] || status=1; }
-    fi
-    rm -rf "$work"
-    exit "$status"
-}
-trap cleanup EXIT
+trap 'rm -rf "$work"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 # Obtain credentials from the local Kind cluster, not a similarly named remote
@@ -58,10 +41,20 @@ if [[ -n $existing ]]; then
     exit 1
 fi
 skaffold build "${options[@]}" --file-output "$work/artifacts.json"
-# Atomically claim the namespace after building. A concurrent run must not be
-# overwritten or cleaned up if it created the namespace since the initial check.
-kubectl --context "$context" --namespace "$namespace" create namespace "$namespace"
-claimed=true
+cleanup() {
+    status=$?
+    trap - EXIT
+    if [[ $status -ne 0 ]]; then
+        kubectl --context "$context" --namespace "$namespace" get pods,jobs,deployments -o wide || true
+        kubectl --context "$context" --namespace "$namespace" get events --sort-by=.lastTimestamp || true
+        kubectl --context "$context" --namespace "$namespace" logs -l app --all-containers --prefix --tail=100 || true
+    fi
+    skaffold delete "${options[@]}" || { [[ $status -ne 0 ]] || status=1; }
+    kubectl --context "$context" --namespace "$namespace" wait --for=delete namespace/"$namespace" --timeout=120s || { [[ $status -ne 0 ]] || status=1; }
+    rm -rf "$work"
+    exit "$status"
+}
+trap cleanup EXIT
 skaffold deploy "${options[@]}" --build-artifacts "$work/artifacts.json" --load-images
 result=0
 skaffold verify --namespace "$namespace" --profile "$profiles" --build-artifacts "$work/artifacts.json" || result=$?

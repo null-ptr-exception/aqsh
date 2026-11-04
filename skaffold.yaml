@@ -45,7 +45,7 @@ profiles:
   manifests:
     kustomize:
       paths:
-      - test/fixtures
+      - .
   verify:
   - name: integration-test
     container:

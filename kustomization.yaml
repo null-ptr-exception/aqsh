@@ -1,0 +1,49 @@
+# E2E overlay only; the default Skaffold deployment uses the complete k8s/ base.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: aqsh
+resources:
+- k8s
+- test/fixtures/mock-values.yaml
+configMapGenerator:
+- name: aqsh-tasks-config
+  namespace: aqsh
+  behavior: replace
+  files:
+  - tasks.yaml
+- name: aqsh-task-scripts
+  namespace: aqsh
+  behavior: replace
+  files:
+  - tasks/hello.sh
+  - tasks/deploy.sh
+  - tasks/cleanup.sh
+  - tasks/slow.sh
+- name: aqsh-test-tasks
+  files:
+  - tasks.d/test.yaml
+- name: aqsh-mock-values
+  files:
+  - test/fixtures/server.py
+patches:
+- patch: |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: aqsh
+      namespace: aqsh
+    spec:
+      template:
+        spec:
+          volumes:
+          - name: tasks-config
+            configMap: null
+            projected:
+              sources:
+              - configMap:
+                  name: aqsh-tasks-config
+              - configMap:
+                  name: aqsh-test-tasks
+                  items:
+                  - key: test.yaml
+                    path: tasks.d/test.yaml
