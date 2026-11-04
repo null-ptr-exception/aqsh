@@ -6,11 +6,11 @@ services:
     build: .
     environment:
       AQSH_MODE: both
-      AQSH_TASKS_CONFIG: /etc/aqsh/e2e-tasks.yaml
+      AQSH_TASKS_CONFIG: /etc/aqsh/tasks.yaml
       AQSH_REDIS_ADDR: redis:6379
     volumes:
       - ./tasks.yaml:/etc/aqsh/tasks.yaml:ro
-      - ./test/fixtures/tasks.yaml:/etc/aqsh/e2e-tasks.yaml:ro
+      - ./tasks.d:/etc/aqsh/tasks.d:ro
       - ./tasks:/tasks:ro
     depends_on:
       - redis

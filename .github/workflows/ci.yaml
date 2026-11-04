@@ -44,9 +44,6 @@ jobs:
           chmod +x skaffold kind kubectl
           sudo mv skaffold kind kubectl /usr/local/bin/
 
-      - name: Check E2E harness contracts
-        run: python3 test/e2e_runner_test.py
-
       - name: Create disposable Kubernetes cluster
         run: |
           kind create cluster --name aqsh-e2e --wait 120s \

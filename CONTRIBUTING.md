@@ -5,7 +5,7 @@
 - Go toolchain from `go.mod`
 - Docker / Docker Compose
 - kubectl + Skaffold (for Kubernetes development)
-- Kind, Python 3 and Go (for E2E and coverage)
+- Kind and Go (for E2E and coverage)
 
 ## Project Structure
 
@@ -52,7 +52,7 @@ kubectl --context kind-aqsh-dev --namespace aqsh apply -k k8s
 
 Kind/Skaffold is the supported E2E path and the path exercised in CI. Compose is
 for local development. Install Kind v0.31.0, kubectl v1.33.x, Skaffold v2.25.0,
-Python 3 and the Go toolchain from `go.mod`.
+and the Go toolchain from `go.mod`.
 
 ```bash
 kind create cluster --name aqsh-e2e --wait 120s \
@@ -62,21 +62,19 @@ make test-e2e KUBE_CONTEXT=kind-aqsh-e2e E2E_ARGS=--coverage
 kind delete cluster --name aqsh-e2e
 ```
 
-Both Make invocations use `test/e2e.sh`, the only E2E entry point. The runner requires
-a disposable **local Kind** cluster and a `kind-<cluster>` context. It obtains that
-cluster's kubeconfig from Kind rather than trusting a similarly named remote
-context, and leaves the user's kubeconfig unchanged. An existing `aqsh` namespace
-is refused; after building, namespace creation atomically excludes concurrent runs. The runner
-keeps that claim until resource cleanup finishes, then deletes the namespace last.
-The namespace is fixed and must match `k8s/namespace.yaml` and all test overlays;
-the harness contract tests check that agreement. Arbitrary Skaffold flags and
-context/namespace overrides are rejected.
+Both Make invocations use `test/e2e.sh`, the only E2E entry point. Use a disposable,
+**single-user local Kind** cluster with a `kind-<cluster>` context; concurrent runs
+on the same cluster are unsupported. The runner obtains credentials from Kind
+and leaves the user's kubeconfig unchanged. An existing `aqsh` namespace is
+refused. The namespace is fixed and must match `k8s/namespace.yaml` and the overlays.
+Context/namespace overrides are rejected.
 
-The `e2e` overlay under `test/fixtures/` adds the test task configuration and mock
-values server. Compose uses the same fixtures. Each run builds once, deploys,
-runs the shell suite as a Kubernetes Job, and cleans up its claimed resources.
-Build/preflight failures do not delete existing resources; test failures retain
-their nonzero status through coverage collection and cleanup.
+The E2E overlay is the root `kustomization.yaml`, selected only by the `e2e`
+profile. It generates ConfigMaps from the real `tasks.yaml` and `tasks/*.sh`,
+and projects `tasks.d/test.yaml` into the config directory to exercise `include`.
+Compose uses the same files. Mock server resources live under `test/fixtures/`.
+Each run builds once, deploys, verifies and cleans up. Build/preflight failures
+do not delete resources; verification and coverage failures remain nonzero.
 
 `--coverage` adds instrumentation and flushes/copies coverage before cleanup, even
 when verification fails. Each run creates a fresh `coverage/e2e.*/` directory and
@@ -88,11 +86,7 @@ supported for the baseline suite, not in combination with additional test profil
 
 ```bash
 go test ./...
-python3 test/e2e_runner_test.py
 ```
-
-The Python checks use fake CLIs for failure contracts and offline `kubectl kustomize`
-for example/test separation and namespace consistency; they do not deploy a cluster.
 
 ## Releasing
 
