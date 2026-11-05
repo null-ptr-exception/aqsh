@@ -2,6 +2,7 @@ package auth
 
 import (
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"strings"
@@ -25,6 +26,7 @@ type ClusterConfig struct {
 	TokenFile string `yaml:"token_file"`
 }
 
+// Load reads exactly one authentication configuration document with known fields.
 func Load(path string) (Config, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -36,6 +38,13 @@ func Load(path string) (Config, error) {
 	d.KnownFields(true)
 	if err := d.Decode(&cfg); err != nil {
 		return cfg, err
+	}
+	var extra any
+	if err := d.Decode(&extra); err != io.EOF {
+		if err != nil {
+			return cfg, fmt.Errorf("reading trailing authentication config: %w", err)
+		}
+		return cfg, fmt.Errorf("authentication config must contain exactly one YAML document")
 	}
 	return cfg, nil
 }

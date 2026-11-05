@@ -173,6 +173,8 @@ func TestTokenReviewErrorsReachHTTPBoundary(t *testing.T) {
 		body   string
 		want   int
 	}{
+		{"missing status", 200, `{}`, 503},
+		{"null status", 200, `{"status":null}`, 503},
 		{"denied", 200, `{"status":{"authenticated":false}}`, 401},
 		{"reviewer rejected", 401, "private-reviewer-error", 503},
 		{"reviewer forbidden", 403, "private-reviewer-error", 503},

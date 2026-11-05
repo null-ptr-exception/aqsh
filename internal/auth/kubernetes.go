@@ -14,7 +14,10 @@ import (
 	"strings"
 )
 
-const clusterExtraKey = "authentication.kubernetes.io/cluster-name"
+const (
+	clusterExtraKey      = "authentication.kubernetes.io/cluster-name"
+	maxConcurrentReviews = 32
+)
 
 type Kubernetes struct {
 	includeCluster bool
@@ -22,6 +25,7 @@ type Kubernetes struct {
 	config         ClusterConfig
 	audiences      []string
 	client         *http.Client
+	inFlight       chan struct{}
 }
 
 type tokenReview struct {
@@ -31,7 +35,7 @@ type tokenReview struct {
 		Token     string   `json:"token"`
 		Audiences []string `json:"audiences"`
 	} `json:"spec"`
-	Status struct {
+	Status *struct {
 		Authenticated bool     `json:"authenticated"`
 		Audiences     []string `json:"audiences"`
 		User          userInfo `json:"user"`
@@ -50,7 +54,7 @@ func New(cfg Config) (*Kubernetes, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
-	k := &Kubernetes{audiences: append([]string(nil), cfg.Audiences...), includeCluster: cfg.IncludeClusterInIdentity}
+	k := &Kubernetes{audiences: append([]string(nil), cfg.Audiences...), includeCluster: cfg.IncludeClusterInIdentity, inFlight: make(chan struct{}, maxConcurrentReviews)}
 	for id, cluster := range cfg.Clusters {
 		client, err := newClient(cluster.CAFile, cfg)
 		if err != nil {
@@ -99,7 +103,16 @@ func readToken(path string) (string, error) {
 	return token, nil
 }
 
+// Authenticate bounds in-flight reviews and includes capacity wait in the timeout.
 func (k *Kubernetes) Authenticate(ctx context.Context, token string) (Principal, error) {
+	ctx, cancel := context.WithTimeout(ctx, k.client.Timeout)
+	defer cancel()
+	select {
+	case k.inFlight <- struct{}{}:
+		defer func() { <-k.inFlight }()
+	case <-ctx.Done():
+		return Principal{}, ErrUnavailable
+	}
 	reviewer, err := readToken(k.config.TokenFile)
 	if err != nil {
 		return Principal{}, ErrUnavailable
@@ -127,14 +140,17 @@ func (k *Kubernetes) Authenticate(ctx context.Context, token string) (Principal,
 		return Principal{}, ErrUnavailable
 	}
 	status := result.Status
+	if status == nil {
+		return Principal{}, ErrUnavailable
+	}
 	// Existing task environments and values_url represent groups as CSV. Reject
 	// ambiguous names rather than turn one verified group into multiple groups.
 	for _, group := range status.User.Groups {
-		if group == "" || strings.TrimSpace(group) != group || strings.ContainsAny(group, ",\r\n") {
+		if group == "" || strings.TrimSpace(group) != group || strings.ContainsAny(group, ",\r\n\x00") {
 			return Principal{}, ErrUnauthenticated
 		}
 	}
-	if !status.Authenticated || status.Error != "" || status.User.Username == "" || status.User.UID == "" {
+	if !status.Authenticated || status.Error != "" || status.User.Username == "" {
 		return Principal{}, ErrUnauthenticated
 	}
 	if !slices.ContainsFunc(status.Audiences, func(a string) bool { return slices.Contains(k.audiences, a) }) {

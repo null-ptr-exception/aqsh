@@ -72,7 +72,9 @@ func Middleware(a Authenticator, identityHeader, groupsHeader string, next http.
 			return
 		}
 		p.Groups = append([]string(nil), p.Groups...)
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, p)))
+		// Preserve the verified context for outer request logging as well.
+		*r = *r.WithContext(context.WithValue(r.Context(), principalKey{}, p))
+		next.ServeHTTP(w, r)
 	})
 }
 

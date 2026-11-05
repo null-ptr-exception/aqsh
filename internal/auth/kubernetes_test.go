@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -89,7 +90,10 @@ func TestTokenReviewRejectsInvalidResponses(t *testing.T) {
 		{"wrong audience", `{"status":{"authenticated":true,"audiences":["other"],"user":{"username":"u","uid":"id"}}}`, 201, ErrUnauthenticated},
 		{"missing audience", `{"status":{"authenticated":true,"user":{"username":"u","uid":"id"}}}`, 201, ErrUnauthenticated},
 		{"ambiguous groups", `{"status":{"authenticated":true,"audiences":["aqsh"],"user":{"username":"u","uid":"id","groups":["untrusted,admin"]}}}`, 201, ErrUnauthenticated},
-		{"missing uid", `{"status":{"authenticated":true,"audiences":["aqsh"],"user":{"username":"u"}}}`, 201, ErrUnauthenticated},
+		{"missing username", `{"status":{"authenticated":true,"audiences":["aqsh"],"user":{"uid":"id"}}}`, 201, ErrUnauthenticated},
+		{"NUL group", `{"status":{"authenticated":true,"audiences":["aqsh"],"user":{"username":"u","groups":["team\u0000admin"]}}}`, 201, ErrUnauthenticated},
+		{"missing status", `{}`, 201, ErrUnavailable},
+		{"null status", `{"status":null}`, 201, ErrUnavailable},
 		{"status error", `{"status":{"authenticated":true,"error":"secret","audiences":["aqsh"],"user":{"username":"u","uid":"id"}}}`, 201, ErrUnauthenticated},
 		{"http failure", `private API error`, 403, ErrUnavailable},
 		{"malformed", `{`, 201, ErrUnavailable},
@@ -157,5 +161,78 @@ func TestLoadAndValidate(t *testing.T) {
 	}
 	if _, err := Load(path); err == nil {
 		t.Fatal("unknown config field accepted")
+	}
+}
+
+// Optional Kubernetes UID must not prevent valid username-based authentication.
+func TestTokenReviewAcceptsOptionalUID(t *testing.T) {
+	cluster, _ := testCluster(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"status":{"authenticated":true,"audiences":["aqsh"],"user":{"username":"oidc-user"}}}`))
+	})
+	k, err := New(Config{Audiences: []string{"aqsh"}, Clusters: map[string]ClusterConfig{"a": cluster}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer k.Close()
+	p, err := k.Authenticate(context.Background(), "token")
+	if err != nil || p.Username != "oidc-user" || p.UID != "" {
+		t.Fatalf("principal=%+v err=%v", p, err)
+	}
+}
+
+// Saturated reviews must respect cancellation and release capacity after completion.
+func TestTokenReviewConcurrencyAndCapacityRecovery(t *testing.T) {
+	release := make(chan struct{})
+	var once sync.Once
+	defer once.Do(func() { close(release) })
+	started := make(chan struct{}, maxConcurrentReviews+1)
+	cluster, _ := testCluster(t, func(w http.ResponseWriter, r *http.Request) {
+		started <- struct{}{}
+		select {
+		case <-release:
+			successReview(w)
+		case <-r.Context().Done():
+		}
+	})
+	k, err := New(Config{Audiences: []string{"aqsh"}, RequestTimeout: 5 * time.Second, Clusters: map[string]ClusterConfig{"a": cluster}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer k.Close()
+	results := make(chan error, maxConcurrentReviews)
+	for i := 0; i < maxConcurrentReviews; i++ {
+		go func() { _, err := k.Authenticate(context.Background(), "token"); results <- err }()
+	}
+	for i := 0; i < maxConcurrentReviews; i++ {
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			t.Fatal("reviews did not reach endpoint")
+		}
+	}
+	for _, cancelled := range []bool{false, true} {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		if cancelled {
+			cancel()
+		}
+		_, err := k.Authenticate(ctx, "token")
+		cancel()
+		if !errors.Is(err, ErrUnavailable) {
+			t.Fatalf("saturated review returned %v", err)
+		}
+	}
+	select {
+	case <-started:
+		t.Fatal("review exceeded concurrency limit")
+	default:
+	}
+	once.Do(func() { close(release) })
+	for i := 0; i < maxConcurrentReviews; i++ {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := k.Authenticate(context.Background(), "token"); err != nil {
+		t.Fatalf("capacity not recovered: %v", err)
 	}
 }

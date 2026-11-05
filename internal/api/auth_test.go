@@ -1,13 +1,16 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,10 +23,14 @@ import (
 	"github.com/rophy/aqsh/internal/worker"
 )
 
-type verifiedCaller struct{ groups []string }
+type verifiedCaller struct {
+	groups   []string
+	identity string
+	err      error
+}
 
 func (v verifiedCaller) Authenticate(context.Context, string) (auth.Principal, error) {
-	return auth.Principal{Provider: "kubernetes", Cluster: "cluster-a", Username: "verified-user", UID: "verified-uid", Groups: v.groups}, nil
+	return auth.Principal{Identity: v.identity, Provider: "kubernetes", Cluster: "cluster-a", Username: "verified-user", UID: "verified-uid", Groups: v.groups}, v.err
 }
 
 func TestNativeIdentityReachesTaskAuthorizationAndQueue(t *testing.T) {
@@ -219,6 +226,109 @@ func TestFederatedIdentityAuthorizationAndQueue(t *testing.T) {
 					if strings.Contains(string(info.Payload), secret) {
 						t.Fatalf("credential or forged identity in queue: %s", secret)
 					}
+				}
+			}
+		})
+	}
+}
+
+// Logs cover failures once and retain verified identity on successful requests.
+func TestNativeAccessLogIncludesAuthenticationResults(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	defer slog.SetDefault(previous)
+	s := &Server{cfg: &config.Config{AuthMode: "kubernetes", IdentityHeader: "X-Forwarded-User", GroupsHeader: "X-Forwarded-Groups"}, tasks: &tasks.TasksConfig{Tasks: map[string]tasks.TaskDef{}}}
+	for _, tc := range []struct {
+		name   string
+		caller verifiedCaller
+		bearer bool
+		want   int
+	}{
+		{"missing", verifiedCaller{}, false, 401},
+		{"denied", verifiedCaller{err: auth.ErrUnauthenticated}, true, 401},
+		{"unavailable", verifiedCaller{err: auth.ErrUnavailable}, true, 503},
+		{"verified", verifiedCaller{groups: []string{"verified-group"}, identity: "a/verified-user"}, true, 200},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			output.Reset()
+			r := httptest.NewRequest("GET", "/tasks", nil)
+			r.Header.Set("X-Forwarded-User", "forged-user")
+			r.Header.Set("X-Forwarded-Groups", "forged-group")
+			if tc.bearer {
+				r.Header.Set("Authorization", "Bearer private-token")
+			}
+			w := httptest.NewRecorder()
+			s.handler(tc.caller).ServeHTTP(w, r)
+			var entry map[string]any
+			if err := json.Unmarshal(output.Bytes(), &entry); err != nil {
+				t.Fatalf("expected one log entry: %s (%v)", output.String(), err)
+			}
+			if w.Code != tc.want || entry["status"] != float64(tc.want) || entry["path"] != "/tasks" {
+				t.Fatalf("response=%d log=%v", w.Code, entry)
+			}
+			if strings.Contains(output.String(), "private-token") || strings.Contains(output.String(), "forged") {
+				t.Fatal("untrusted identity or credential logged")
+			}
+			if tc.want == 200 {
+				if entry["user"] != "a/verified-user" || entry["groups"] != "verified-group" {
+					t.Fatalf("verified identity missing: %v", entry)
+				}
+			} else if entry["user"] != nil || entry["groups"] != nil {
+				t.Fatalf("failed authentication logged identity: %v", entry)
+			}
+		})
+	}
+}
+
+// Both values_url paths must use verified identity/groups, including qualification.
+func TestNativeValuesURLUsesVerifiedIdentity(t *testing.T) {
+	for _, identity := range []string{"", "cluster-a/verified-user"} {
+		t.Run("identity="+identity, func(t *testing.T) {
+			wantIdentity := identity
+			if wantIdentity == "" {
+				wantIdentity = "verified-user"
+			}
+			var calls atomic.Int32
+			endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				if r.URL.Query().Get("user") != wantIdentity || r.URL.Query().Get("groups") != "verified-group" || r.URL.Query().Get("task") != "run" {
+					t.Errorf("unverified values query: %s", r.URL.RawQuery)
+				}
+				if r.Header.Get("Authorization") != "" || r.Header.Get("X-Forwarded-User") != "" {
+					t.Error("caller headers reached values service")
+				}
+				w.Write([]byte(`["allowed"]`))
+			}))
+			defer endpoint.Close()
+			mr := miniredis.RunT(t)
+			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+			defer rdb.Close()
+			s := New(&config.Config{AuthMode: "kubernetes", IdentityHeader: "X-Forwarded-User", GroupsHeader: "X-Forwarded-Groups", ResultRetention: time.Hour},
+				&tasks.TasksConfig{Tasks: map[string]tasks.TaskDef{"run": {Script: "run.sh", AllowedGroups: []string{"verified-group"}, Input: []tasks.Input{{Name: "instance", Env: "INSTANCE", Required: true, Type: "string", ValuesURL: endpoint.URL + "?user=${identity}&groups=${groups}&task=${task}"}}}}}, rdb, asynq.RedisClientOpt{Addr: mr.Addr()}, "test")
+			defer s.client.Close()
+			defer s.inspector.Close()
+			for _, tc := range []struct {
+				method, body string
+				groups       []string
+				want, calls  int
+			}{
+				{"GET", "", []string{"verified-group"}, 200, 1},
+				{"POST", `{"instance":"allowed"}`, []string{"verified-group"}, 202, 2},
+				{"POST", `{"instance":"forbidden"}`, []string{"verified-group"}, 403, 3},
+				{"POST", `{"instance":"allowed"}`, nil, 403, 3},
+			} {
+				r := httptest.NewRequest(tc.method, "/tasks/run", strings.NewReader(tc.body))
+				r.Header.Set("Authorization", "Bearer private-token")
+				r.Header.Set("X-Forwarded-User", "forged-user")
+				r.Header.Set("X-Forwarded-Groups", "verified-group")
+				w := httptest.NewRecorder()
+				s.handler(verifiedCaller{groups: tc.groups, identity: identity}).ServeHTTP(w, r)
+				if w.Code != tc.want || int(calls.Load()) != tc.calls {
+					t.Fatalf("%s: status=%d calls=%d body=%s", tc.method, w.Code, calls.Load(), w.Body.String())
+				}
+				if tc.method == "GET" && !strings.Contains(w.Body.String(), `"allowed"`) {
+					t.Fatal("resolved values missing")
 				}
 			}
 		})

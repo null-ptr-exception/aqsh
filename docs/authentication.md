@@ -38,7 +38,9 @@ fields, invalid endpoints, missing audiences and unreadable credentials cause
 startup to fail. HTTPS is required unless `allow_http: true` is explicitly set on
 that endpoint. Omitting `ca_file` uses system roots. HTTPS certificate verification
 cannot be disabled, and redirects are never followed, including HTTPS-to-HTTP
-redirects. Requests have the configured timeout (default 5 seconds).
+redirects. At most 32 TokenReviews run concurrently per API process. Waiting for
+capacity counts toward the configured timeout (default 5 seconds); timeouts return
+503. Authentication configuration must contain exactly one YAML document.
 
 The caller sends `Authorization: Bearer <token>` issued for an audience in the
 configured list. aqsh submits a TokenReview with those audiences using its
@@ -46,8 +48,10 @@ configured list. aqsh submits a TokenReview with those audiences using its
 on `tokenreviews.authentication.k8s.io`. Its token must target the Kubernetes API
 audience, which may differ from the caller's `aqsh` audience.
 
-The response must authenticate the caller, include a username and UID, and return
+The response must authenticate the caller, include a username, and return
 an audience intersecting the request. Authentication denial returns 401.
+UID is optional and is preserved when provided. A missing/null response status
+is an unavailable authentication backend (503), not an authentication denial.
 Connection failures, timeouts, non-success HTTP responses (including reviewer
 credential rejection and HTTP 5xx), response-body decode/size failures, or malformed
 cluster metadata return 503 without exposing backend details. A successful HTTP response reporting

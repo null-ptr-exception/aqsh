@@ -649,9 +649,9 @@ func (s *Server) handler(authenticator auth.Authenticator) http.Handler {
 		slog.Info("coverage endpoint enabled", "cover_dir", coverDir)
 	}
 
-	var handler http.Handler = s.accessLog(mux)
+	var handler http.Handler = mux
 	if authenticator != nil {
 		handler = auth.Middleware(authenticator, s.cfg.IdentityHeader, s.cfg.GroupsHeader, handler)
 	}
-	return handler
+	return s.accessLog(handler)
 }
