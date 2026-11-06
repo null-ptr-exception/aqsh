@@ -14,18 +14,10 @@ var (
 	ErrUnavailable     = errors.New("authentication unavailable")
 )
 
-// Principal contains verified identity only. It never contains bearer credentials.
-// Cluster comes from the trusted TokenReview response or configured fallback,
-// never from caller headers or unverified token claims.
+// Principal contains the verified identity and groups used for authorization.
 type Principal struct {
-	// Identity is set only when cluster-qualified task identity is enabled.
-	// Username always retains the username returned by TokenReview.
-	Identity string   `json:"identity,omitempty"`
-	Provider string   `json:"provider"`
-	Cluster  string   `json:"cluster"`
-	Username string   `json:"username"`
-	UID      string   `json:"uid"`
-	Groups   []string `json:"groups,omitempty"`
+	Identity string
+	Groups   []string
 }
 
 type Authenticator interface {

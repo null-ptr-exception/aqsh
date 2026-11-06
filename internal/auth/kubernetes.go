@@ -3,6 +3,7 @@ package auth
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -12,20 +13,28 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
+	"time"
 )
 
 const (
 	clusterExtraKey      = "authentication.kubernetes.io/cluster-name"
 	maxConcurrentReviews = 32
+	maxCachedReviews     = 256
 )
 
 type Kubernetes struct {
-	includeCluster bool
-	cluster        string
-	config         ClusterConfig
-	audiences      []string
-	client         *http.Client
-	inFlight       chan struct{}
+	config   Config
+	client   *http.Client
+	inFlight chan struct{}
+	mu       sync.Mutex
+	cache    map[[sha256.Size]byte]cachedReview
+	now      func() time.Time
+}
+
+type cachedReview struct {
+	principal Principal
+	expires   time.Time
 }
 
 type tokenReview struct {
@@ -45,27 +54,24 @@ type tokenReview struct {
 
 type userInfo struct {
 	Username string              `json:"username"`
-	UID      string              `json:"uid"`
 	Groups   []string            `json:"groups"`
 	Extra    map[string][]string `json:"extra"`
 }
 
 func New(cfg Config) (*Kubernetes, error) {
-	if err := cfg.validate(); err != nil {
+	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	k := &Kubernetes{audiences: append([]string(nil), cfg.Audiences...), includeCluster: cfg.IncludeClusterInIdentity, inFlight: make(chan struct{}, maxConcurrentReviews)}
-	for id, cluster := range cfg.Clusters {
-		client, err := newClient(cluster.CAFile, cfg)
-		if err != nil {
-			return nil, fmt.Errorf("cluster %q: %w", id, err)
-		}
-		if _, err := readToken(cluster.TokenFile); err != nil {
-			return nil, fmt.Errorf("cluster %q: %w", id, err)
-		}
-		k.cluster, k.config, k.client = id, cluster, client
+	client, err := newClient(cfg.TokenReview.CAFile, cfg)
+	if err != nil {
+		return nil, err
 	}
-	return k, nil
+	if _, err := readToken(cfg.TokenReview.TokenFile); err != nil {
+		return nil, err
+	}
+	cfg.Audiences = slices.Clone(cfg.Audiences)
+	return &Kubernetes{config: cfg, client: client, inFlight: make(chan struct{}, maxConcurrentReviews),
+		cache: make(map[[sha256.Size]byte]cachedReview), now: time.Now}, nil
 }
 
 func newClient(caFile string, cfg Config) (*http.Client, error) {
@@ -103,8 +109,46 @@ func readToken(path string) (string, error) {
 	return token, nil
 }
 
-// Authenticate bounds in-flight reviews and includes capacity wait in the timeout.
+// Authenticate caches successful reviews for a fixed, bounded lifetime. Credentials
+// are never stored in the cache, and failed reviews never reuse expired entries.
 func (k *Kubernetes) Authenticate(ctx context.Context, token string) (Principal, error) {
+	if ctx.Err() != nil {
+		return Principal{}, ErrUnavailable
+	}
+	if k.config.CacheTTL == 0 {
+		return k.review(ctx, token)
+	}
+	key, started := sha256.Sum256([]byte(token)), k.now()
+	k.mu.Lock()
+	entry, ok := k.cache[key]
+	k.mu.Unlock()
+	if ok && k.now().Before(entry.expires) {
+		entry.principal.Groups = slices.Clone(entry.principal.Groups)
+		return entry.principal, nil
+	}
+	p, err := k.review(ctx, token)
+	if err != nil {
+		return Principal{}, err
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	now := k.now()
+	for hash, entry := range k.cache {
+		if !now.Before(entry.expires) {
+			delete(k.cache, hash)
+		}
+	}
+	// Keep an existing entry's deadline even if concurrent cache misses succeed.
+	if _, exists := k.cache[key]; !exists && len(k.cache) < maxCachedReviews && now.Before(started.Add(k.config.CacheTTL)) {
+		cached := p
+		cached.Groups = slices.Clone(p.Groups)
+		k.cache[key] = cachedReview{cached, started.Add(k.config.CacheTTL)}
+	}
+	return p, nil
+}
+
+// review bounds in-flight requests, including the capacity wait in the timeout.
+func (k *Kubernetes) review(ctx context.Context, token string) (Principal, error) {
 	ctx, cancel := context.WithTimeout(ctx, k.client.Timeout)
 	defer cancel()
 	select {
@@ -113,14 +157,14 @@ func (k *Kubernetes) Authenticate(ctx context.Context, token string) (Principal,
 	case <-ctx.Done():
 		return Principal{}, ErrUnavailable
 	}
-	reviewer, err := readToken(k.config.TokenFile)
+	reviewer, err := readToken(k.config.TokenReview.TokenFile)
 	if err != nil {
 		return Principal{}, ErrUnavailable
 	}
 	tr := tokenReview{APIVersion: "authentication.k8s.io/v1", Kind: "TokenReview"}
-	tr.Spec.Token, tr.Spec.Audiences = token, k.audiences
+	tr.Spec.Token, tr.Spec.Audiences = token, k.config.Audiences
 	body, _ := json.Marshal(tr)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(k.config.APIServer, "/")+"/apis/authentication.k8s.io/v1/tokenreviews", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(k.config.TokenReview.URL, "/")+"/apis/authentication.k8s.io/v1/tokenreviews", bytes.NewReader(body))
 	if err != nil {
 		return Principal{}, ErrUnavailable
 	}
@@ -150,22 +194,26 @@ func (k *Kubernetes) Authenticate(ctx context.Context, token string) (Principal,
 			return Principal{}, ErrUnauthenticated
 		}
 	}
-	if !status.Authenticated || status.Error != "" || status.User.Username == "" {
+	if !status.Authenticated || status.Error != "" || status.User.Username == "" || strings.ContainsAny(status.User.Username, "\r\n\x00") {
 		return Principal{}, ErrUnauthenticated
 	}
-	if !slices.ContainsFunc(status.Audiences, func(a string) bool { return slices.Contains(k.audiences, a) }) {
+	if !slices.ContainsFunc(status.Audiences, func(a string) bool { return slices.Contains(k.config.Audiences, a) }) {
 		return Principal{}, ErrUnauthenticated
 	}
-	cluster := k.cluster
-	if names, present := status.User.Extra[clusterExtraKey]; present {
+	cluster := k.config.ClusterName
+	if k.config.TrustClusterExtra {
+		names := status.User.Extra[clusterExtraKey]
 		if len(names) != 1 || !validClusterName(names[0]) {
-			return Principal{}, ErrUnavailable
+			return Principal{}, ErrUnauthenticated
 		}
 		cluster = names[0]
 	}
-	p := Principal{Provider: "kubernetes", Cluster: cluster, Username: status.User.Username, UID: status.User.UID, Groups: status.User.Groups}
-	if k.includeCluster {
-		p.Identity = cluster + "/" + p.Username
+	p := Principal{Identity: status.User.Username, Groups: status.User.Groups}
+	if k.config.IncludeClusterInIdentity {
+		p.Identity = cluster + "/" + p.Identity
+		for i := range p.Groups {
+			p.Groups[i] = cluster + "/" + p.Groups[i]
+		}
 	}
 	return p, nil
 }

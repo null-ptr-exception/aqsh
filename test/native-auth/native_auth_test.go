@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"flag"
 	"io"
 	"net/http"
 	"os"
@@ -17,11 +18,16 @@ import (
 	"github.com/rophy/aqsh/internal/worker"
 )
 
+var requireE2E = flag.Bool("require-e2e", false, "fail if the E2E environment is missing")
+
 // This test is run by the native-auth Skaffold profiles inside a real cluster.
 // Ordinary go test ./... skips it rather than substituting a mock TokenReview.
 func TestNativeAuthenticationE2E(t *testing.T) {
 	base := os.Getenv("AQSH_NATIVE_E2E_URL")
 	if base == "" {
+		if *requireE2E {
+			t.Fatal("AQSH_NATIVE_E2E_URL is required")
+		}
 		t.Skip("run test/e2e.sh with the native-auth Skaffold profile")
 	}
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -37,11 +43,14 @@ func TestNativeAuthenticationE2E(t *testing.T) {
 	wrongAudience := string(read("wrong-audience"))
 	apiToken := string(read("api-token"))
 	const username = "system:serviceaccount:aqsh:aqsh-e2e-caller"
-	const group = "system:serviceaccounts:aqsh"
+	group := "system:serviceaccounts:aqsh"
+	acceptedGroup, rejectedGroup := "serviceaccount-group", "qualified-serviceaccount-group"
 	identity, accepted, rejected := username, "identity", "qualified-identity"
 	qualified := os.Getenv("AQSH_NATIVE_E2E_QUALIFIED") == "true"
 	if qualified {
 		identity, accepted, rejected = "kind-e2e/"+username, rejected, accepted
+		group = "kind-e2e/" + group
+		acceptedGroup, rejectedGroup = rejectedGroup, acceptedGroup
 	}
 	request := func(t *testing.T, c *http.Client, method, url, token, body string, headers map[string]string, want int) []byte {
 		t.Helper()
@@ -75,7 +84,7 @@ func TestNativeAuthenticationE2E(t *testing.T) {
 		return request(t, client, method, base+path, token, "{}", headers, want)
 	}
 
-	// Read the actual ServiceAccount UID for comparison with the queued Principal.
+	// The caller can use its API-audience token but cannot create TokenReviews.
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(read("ca.crt")) {
 		t.Fatal("invalid cluster CA")
@@ -84,15 +93,6 @@ func TestNativeAuthenticationE2E(t *testing.T) {
 		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots},
 	}}
 	defer kube.CloseIdleConnections()
-	sa := request(t, kube, "GET", "https://kubernetes.default.svc/api/v1/namespaces/aqsh/serviceaccounts/aqsh-e2e-caller", apiToken, "", nil, 200)
-	var account struct {
-		Metadata struct {
-			UID string `json:"uid"`
-		} `json:"metadata"`
-	}
-	if err := json.Unmarshal(sa, &account); err != nil || account.Metadata.UID == "" {
-		t.Fatal("missing live ServiceAccount UID")
-	}
 	t.Run("caller cannot act as reviewer", func(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{"apiVersion": "authentication.k8s.io/v1", "kind": "TokenReview", "spec": map[string]any{"token": caller, "audiences": []string{"aqsh-e2e"}}})
 		request(t, kube, "POST", "https://kubernetes.default.svc/apis/authentication.k8s.io/v1/tokenreviews", apiToken, string(body), nil, 403)
@@ -108,6 +108,7 @@ func TestNativeAuthenticationE2E(t *testing.T) {
 		t.Run("protect "+route.method+" "+route.path, func(t *testing.T) { call(t, route.method, route.path, "", nil, 401) })
 	}
 	t.Run("invalid token", func(t *testing.T) { call(t, "GET", "/tasks", "not-a-valid-token", nil, 401) })
+	t.Run("API token cannot be replayed", func(t *testing.T) { call(t, "GET", "/tasks", apiToken, nil, 401) })
 	t.Run("wrong token audience", func(t *testing.T) { call(t, "GET", "/tasks", wrongAudience, nil, 401) })
 	t.Run("forwarded headers cannot authenticate", func(t *testing.T) {
 		call(t, "POST", "/tasks/"+accepted, "", map[string]string{"X-Forwarded-User": identity, "X-Forwarded-Groups": group}, 401)
@@ -119,8 +120,10 @@ func TestNativeAuthenticationE2E(t *testing.T) {
 		call(t, "POST", "/tasks/forbidden-group", caller, map[string]string{"X-Forwarded-Groups": "ops-team"}, 403)
 	})
 	t.Run("identity format controls ACL", func(t *testing.T) { call(t, "POST", "/tasks/"+rejected, caller, nil, 403) })
-	t.Run("verified Kubernetes group authorizes", func(t *testing.T) { call(t, "POST", "/tasks/serviceaccount-group", caller, nil, 202) })
+	t.Run("verified Kubernetes group authorizes", func(t *testing.T) { call(t, "POST", "/tasks/"+acceptedGroup, caller, nil, 202) })
 
+	t.Run("group format controls ACL", func(t *testing.T) { call(t, "POST", "/tasks/"+rejectedGroup, caller, nil, 403) })
+	t.Run("other cluster group cannot authorize", func(t *testing.T) { call(t, "POST", "/tasks/other-cluster-group", caller, nil, 403) })
 	t.Run("API Redis worker result and logs", func(t *testing.T) {
 		submitted := call(t, "POST", "/tasks/"+accepted, caller, map[string]string{
 			"X-Forwarded-User": "forged-user", "X-Forwarded-Groups": "ops-team",
@@ -152,15 +155,16 @@ func TestNativeAuthenticationE2E(t *testing.T) {
 		if err := json.Unmarshal(info.Payload, &payload); err != nil {
 			t.Fatal(err)
 		}
-		principal := payload.Principal
-		if payload.Identity != identity || principal == nil {
-			t.Fatal("queue lost verified identity/Principal")
+		groups := strings.Split(payload.Groups, ",")
+		if payload.Identity != identity || !slices.Contains(groups, group) || slices.Contains(groups, "ops-team") {
+			t.Fatal("queue lost verified identity/groups")
 		}
-		if principal.Username != username || principal.UID != account.Metadata.UID || principal.Cluster != "kind-e2e" || principal.Provider != "kubernetes" || !slices.Contains(principal.Groups, group) || slices.Contains(principal.Groups, "ops-team") {
-			t.Fatal("queue Principal differs from live TokenReview identity")
-		}
-		if (qualified && principal.Identity != identity) || (!qualified && principal.Identity != "") {
-			t.Fatal("incorrect optional Principal identity")
+		if qualified {
+			for _, g := range groups {
+				if !strings.HasPrefix(g, "kind-e2e/") {
+					t.Fatal("queue contains an unqualified group")
+				}
+			}
 		}
 		execution := call(t, "GET", "/executions/"+task.ID, caller, nil, 200)
 		var result struct {
@@ -170,7 +174,7 @@ func TestNativeAuthenticationE2E(t *testing.T) {
 		if err := json.Unmarshal(execution, &result); err != nil {
 			t.Fatal(err)
 		}
-		if result.Status != "completed" || result.Identity != identity || result.Groups != strings.Join(principal.Groups, ",") || result.Result.ExitCode != 0 || result.Result.Data == nil {
+		if result.Status != "completed" || result.Identity != identity || result.Groups != payload.Groups || result.Result.ExitCode != 0 || result.Result.Data == nil {
 			t.Fatal("API result lost verified identity or successful worker result")
 		}
 		var output struct {

@@ -7,11 +7,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/rophy/aqsh/internal/auth"
 )
 
 type Config struct {
 	AuthMode          string
-	AuthConfig        string
+	Auth              auth.Config
+	authEnvErr        error
 	Mode              string
 	Bind              string
 	TasksConfig       string
@@ -41,9 +44,8 @@ func (r RedisConfig) IsSentinel() bool {
 }
 
 func Load() *Config {
-	return &Config{
+	cfg := &Config{
 		AuthMode:          getEnv("AQSH_AUTH_MODE", "trusted-header"),
-		AuthConfig:        getEnv("AQSH_AUTH_CONFIG", ""),
 		Mode:              getEnv("AQSH_MODE", "both"),
 		Bind:              getEnv("AQSH_BIND", "0.0.0.0:8080"),
 		TasksConfig:       getEnv("AQSH_TASKS_CONFIG", "/etc/aqsh/tasks.yaml"),
@@ -65,6 +67,9 @@ func Load() *Config {
 			SentinelMaster: getEnv("AQSH_REDIS_SENTINEL_MASTER", "mymaster"),
 		},
 	}
+	// Validate after CLI mode overrides; workers do not need API auth settings.
+	cfg.Auth, cfg.authEnvErr = loadAuthEnv(cfg.AuthMode)
+	return cfg
 }
 
 func getEnv(key, defaultVal string) string {
@@ -126,18 +131,16 @@ func (c *Config) Validate() error {
 	if c.Mode == "worker" {
 		return nil
 	}
+	if c.authEnvErr != nil {
+		return c.authEnvErr
+	}
 	switch c.AuthMode {
 	case "", "trusted-header":
-		if c.AuthConfig != "" {
-			return fmt.Errorf("AQSH_AUTH_CONFIG requires AQSH_AUTH_MODE=kubernetes")
-		}
 	case "kubernetes":
 		if c.Mode != "api" {
 			return fmt.Errorf("Kubernetes authentication requires AQSH_MODE=api and a separate worker")
 		}
-		if c.AuthConfig == "" {
-			return fmt.Errorf("AQSH_AUTH_CONFIG is required")
-		}
+		return c.Auth.Validate()
 	default:
 		return fmt.Errorf("unknown AQSH_AUTH_MODE %q", c.AuthMode)
 	}

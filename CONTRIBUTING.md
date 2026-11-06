@@ -93,13 +93,16 @@ make test-e2e KUBE_CONTEXT=kind-aqsh-e2e E2E_ARGS="--profile native-auth,qualifi
 
 The profiles use separate reviewer/caller ServiceAccounts, projected tokens with
 valid and wrong audiences, and a worker without reviewer credentials. The driver
-checks forged headers, user/group ACLs, live ServiceAccount UID in Redis, worker
-identity, execution results and SSE logs. Both overlays include the namespace for
+checks forged headers, shared/qualified user and group ACLs, verified identity in
+Redis, worker identity, execution results and SSE logs. Tokens for both another
+service and the Kubernetes API audience must be rejected by aqsh. The caller has
+no TokenReview or ServiceAccount-read permission. Both overlays include the namespace for
 Skaffold deployment and cleanup. Coverage collection is baseline-only.
 
 These tests exercise a real single-cluster API; kube-federated-auth and execution
 ownership isolation are outside their scope. Ordinary `go test ./...` skips the
-in-cluster driver unless `AQSH_NATIVE_E2E_URL` is set.
+in-cluster driver unless `AQSH_NATIVE_E2E_URL` is set. The test image always passes
+`-require-e2e`, so a missing URL fails instead of reporting a skipped success.
 
 ## Running Checks
 

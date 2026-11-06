@@ -5,6 +5,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/rophy/aqsh/internal/auth"
 )
 
 func TestLoad(t *testing.T) {
@@ -137,20 +139,16 @@ func TestLoad(t *testing.T) {
 
 func TestValidateAuthenticationMode(t *testing.T) {
 	for _, tc := range []struct {
-		mode, authMode, path string
-		valid                bool
+		mode, authMode string
+		valid          bool
 	}{
-		{"both", "trusted-header", "", true},
-		{"api", "kubernetes", "/auth.yaml", true},
-		{"both", "kubernetes", "/auth.yaml", false},
-		{"api", "kubernetes", "", false},
-		{"api", "trusted-header", "/auth.yaml", false},
-		{"api", "typo", "", false},
-		{"typo", "trusted-header", "", false},
-		// A worker never loads authentication configuration or credentials.
-		{"worker", "kubernetes", "/not-mounted/auth.yaml", true},
+		{"both", "trusted-header", true}, {"api", "kubernetes", true},
+		{"both", "kubernetes", false}, {"api", "typo", false},
+		{"typo", "trusted-header", false}, {"worker", "kubernetes", true},
 	} {
-		cfg := &Config{Mode: tc.mode, AuthMode: tc.authMode, AuthConfig: tc.path}
+		cfg := &Config{Mode: tc.mode, AuthMode: tc.authMode, Auth: auth.Config{
+			Audiences: []string{"aqsh"}, TokenReview: auth.Endpoint{URL: "https://api", TokenFile: "/not-mounted/token"},
+		}}
 		if err := cfg.Validate(); (err == nil) != tc.valid {
 			t.Errorf("%+v: %v", tc, err)
 		}

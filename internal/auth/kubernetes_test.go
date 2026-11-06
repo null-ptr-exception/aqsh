@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-func testCluster(t *testing.T, handler http.HandlerFunc) (ClusterConfig, *httptest.Server) {
+func testCluster(t *testing.T, handler http.HandlerFunc) (Endpoint, *httptest.Server) {
 	t.Helper()
 	srv := httptest.NewTLSServer(handler)
 	t.Cleanup(srv.Close)
@@ -28,7 +28,7 @@ func testCluster(t *testing.T, handler http.HandlerFunc) (ClusterConfig, *httpte
 	if err := os.WriteFile(token, []byte("reviewer-one\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	return ClusterConfig{APIServer: srv.URL, CAFile: ca, TokenFile: token}, srv
+	return Endpoint{URL: srv.URL, CAFile: ca, TokenFile: token}, srv
 }
 
 func successReview(w http.ResponseWriter) {
@@ -58,14 +58,14 @@ func TestTokenReviewAndProjectedTokenRotation(t *testing.T) {
 		}
 		successReview(w)
 	})
-	k, err := New(Config{Audiences: []string{"aqsh"}, Clusters: map[string]ClusterConfig{"trusted-a": cluster}})
+	k, err := New(Config{Audiences: []string{"aqsh"}, TokenReview: cluster})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer k.Close()
 	for i := 0; i < 2; i++ {
 		p, err := k.Authenticate(context.Background(), "caller-token")
-		if err != nil || p.Cluster != "trusted-a" || p.UID != "sa-uid" || p.Username != "system:serviceaccount:team:caller" {
+		if err != nil || p.Identity != "system:serviceaccount:team:caller" {
 			t.Fatalf("principal=%+v err=%v", p, err)
 		}
 		if err := os.WriteFile(cluster.TokenFile, []byte("reviewer-two"), 0600); err != nil {
@@ -91,6 +91,7 @@ func TestTokenReviewRejectsInvalidResponses(t *testing.T) {
 		{"missing audience", `{"status":{"authenticated":true,"user":{"username":"u","uid":"id"}}}`, 201, ErrUnauthenticated},
 		{"ambiguous groups", `{"status":{"authenticated":true,"audiences":["aqsh"],"user":{"username":"u","uid":"id","groups":["untrusted,admin"]}}}`, 201, ErrUnauthenticated},
 		{"missing username", `{"status":{"authenticated":true,"audiences":["aqsh"],"user":{"uid":"id"}}}`, 201, ErrUnauthenticated},
+		{"NUL username", `{"status":{"authenticated":true,"audiences":["aqsh"],"user":{"username":"user\u0000other"}}}`, 201, ErrUnauthenticated},
 		{"NUL group", `{"status":{"authenticated":true,"audiences":["aqsh"],"user":{"username":"u","groups":["team\u0000admin"]}}}`, 201, ErrUnauthenticated},
 		{"missing status", `{}`, 201, ErrUnavailable},
 		{"null status", `{"status":null}`, 201, ErrUnavailable},
@@ -100,7 +101,7 @@ func TestTokenReviewRejectsInvalidResponses(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cluster, _ := testCluster(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(tc.status); w.Write([]byte(tc.body)) })
-			k, err := New(Config{Audiences: []string{"aqsh"}, Clusters: map[string]ClusterConfig{"a": cluster}})
+			k, err := New(Config{Audiences: []string{"aqsh"}, TokenReview: cluster})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -119,7 +120,7 @@ func TestTokenReviewCancellationAndTimeout(t *testing.T) {
 		case <-time.After(time.Second):
 		}
 	})
-	k, err := New(Config{Audiences: []string{"aqsh"}, RequestTimeout: 20 * time.Millisecond, Clusters: map[string]ClusterConfig{"a": cluster}})
+	k, err := New(Config{Audiences: []string{"aqsh"}, RequestTimeout: 20 * time.Millisecond, TokenReview: cluster})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,44 +139,18 @@ func TestTokenReviewCancellationAndTimeout(t *testing.T) {
 	}
 }
 
-func TestLoadAndValidate(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "auth.yaml")
-	if err := os.WriteFile(path, []byte("audiences: [aqsh]\nrequest_timeout: 2s\nclusters:\n  a:\n    api_server: https://kubernetes.default.svc\n    token_file: /mounted/token\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := Load(path)
-	if err != nil || cfg.validate() != nil || cfg.RequestTimeout != 2*time.Second {
-		t.Fatalf("config=%+v err=%v", cfg, err)
-	}
-	for _, raw := range []string{"http://api", "https://user:password@api", "https://api?query", "https://api/#fragment", "not a URL"} {
-		if validEndpoint(raw, false) {
-			t.Fatalf("accepted endpoint %s", raw)
-		}
-	}
-	cfg.Audiences = nil
-	if cfg.validate() == nil {
-		t.Fatal("missing audiences accepted")
-	}
-	if err := os.WriteFile(path, []byte("unknown_field: true"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Load(path); err == nil {
-		t.Fatal("unknown config field accepted")
-	}
-}
-
 // Optional Kubernetes UID must not prevent valid username-based authentication.
 func TestTokenReviewAcceptsOptionalUID(t *testing.T) {
 	cluster, _ := testCluster(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte(`{"status":{"authenticated":true,"audiences":["aqsh"],"user":{"username":"oidc-user"}}}`))
 	})
-	k, err := New(Config{Audiences: []string{"aqsh"}, Clusters: map[string]ClusterConfig{"a": cluster}})
+	k, err := New(Config{Audiences: []string{"aqsh"}, TokenReview: cluster})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer k.Close()
 	p, err := k.Authenticate(context.Background(), "token")
-	if err != nil || p.Username != "oidc-user" || p.UID != "" {
+	if err != nil || p.Identity != "oidc-user" {
 		t.Fatalf("principal=%+v err=%v", p, err)
 	}
 }
@@ -194,7 +169,7 @@ func TestTokenReviewConcurrencyAndCapacityRecovery(t *testing.T) {
 		case <-r.Context().Done():
 		}
 	})
-	k, err := New(Config{Audiences: []string{"aqsh"}, RequestTimeout: 5 * time.Second, Clusters: map[string]ClusterConfig{"a": cluster}})
+	k, err := New(Config{Audiences: []string{"aqsh"}, RequestTimeout: 5 * time.Second, TokenReview: cluster})
 	if err != nil {
 		t.Fatal(err)
 	}

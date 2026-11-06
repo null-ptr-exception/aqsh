@@ -41,12 +41,12 @@ func TestMiddleware(t *testing.T) {
 				if token != "caller-secret" {
 					t.Fatal("wrong bearer token")
 				}
-				return Principal{Cluster: "a", Username: "verified", UID: "uid"}, tc.err
+				return Principal{Identity: "verified"}, tc.err
 			})
 			h := Middleware(a, "Custom-User", "Custom-Groups", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if tc.called {
 					p, ok := FromContext(r.Context())
-					if !ok || p.Username != "verified" || len(p.Groups) != 0 {
+					if !ok || p.Identity != "verified" || len(p.Groups) != 0 {
 						t.Fatal("untrusted identity reached handler")
 					}
 					for _, header := range []string{"Authorization", "Custom-User", "Custom-Groups", "X-Forwarded-User", "X-Forwarded-Groups", "X-Forwarded-Cluster", "X-Forwarded-Extra-Cluster-Name"} {

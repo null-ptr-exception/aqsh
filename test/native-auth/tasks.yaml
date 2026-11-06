@@ -17,3 +17,9 @@ tasks:
   forbidden-group:
     script: identity.sh
     allowed_groups: [ops-team]
+  qualified-serviceaccount-group:
+    script: identity.sh
+    allowed_groups: [kind-e2e/system:serviceaccounts:aqsh]
+  other-cluster-group:
+    script: identity.sh
+    allowed_groups: [other-cluster/system:serviceaccounts:aqsh]

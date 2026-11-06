@@ -98,11 +98,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	var authenticator auth.Authenticator
 	if s.cfg.AuthMode == "kubernetes" {
-		cfg, err := auth.Load(s.cfg.AuthConfig)
-		if err != nil {
-			return fmt.Errorf("loading authentication config: %w", err)
-		}
-		kube, err := auth.New(cfg)
+		kube, err := auth.New(s.cfg.Auth)
 		if err != nil {
 			return fmt.Errorf("configuring authentication: %w", err)
 		}
@@ -227,9 +223,6 @@ func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 		Groups:    groups,
 		Env:       env,
 		Payload:   payload,
-	}
-	if principal, ok := auth.FromContext(r.Context()); ok {
-		taskPayload.Principal = &principal
 	}
 	taskBytes, _ := json.Marshal(taskPayload)
 
@@ -621,11 +614,7 @@ func stateToStatus(state asynq.TaskState) string {
 // caller preserves legacy header behavior only in trusted-header mode.
 func (s *Server) caller(r *http.Request) (string, string) {
 	if p, ok := auth.FromContext(r.Context()); ok {
-		identity := p.Identity
-		if identity == "" {
-			identity = p.Username
-		}
-		return identity, strings.Join(p.Groups, ",")
+		return p.Identity, strings.Join(p.Groups, ",")
 	}
 	if s.cfg.AuthMode == "kubernetes" {
 		return "", ""

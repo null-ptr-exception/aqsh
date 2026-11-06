@@ -9,5 +9,5 @@ RUN CGO_ENABLED=0 go test -c -o /native-auth-test ./test/native-auth
 
 FROM alpine:3.20
 COPY --from=builder /native-auth-test /native-auth-test
-ENTRYPOINT ["/native-auth-test"]
+ENTRYPOINT ["/native-auth-test", "-require-e2e"]
 CMD ["-test.v", "-test.timeout=120s"]

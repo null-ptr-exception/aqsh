@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -82,14 +83,18 @@ func TestTokenReviewEndpointContract(t *testing.T) {
 				if err := os.WriteFile(tokenFile, []byte("reviewer-secret\n"), 0600); err != nil {
 					t.Fatal(err)
 				}
-				cc := ClusterConfig{APIServer: srv.URL, TokenFile: tokenFile, AllowHTTP: !backend.https}
+				cc := Endpoint{URL: srv.URL, TokenFile: tokenFile, AllowHTTP: !backend.https}
 				if backend.https {
 					cc.CAFile = filepath.Join(dir, "ca.pem")
 					if err := os.WriteFile(cc.CAFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}), 0600); err != nil {
 						t.Fatal(err)
 					}
 				}
-				k, err := New(Config{Audiences: []string{"aqsh", "other-audience"}, IncludeClusterInIdentity: qualify, Clusters: map[string]ClusterConfig{"fallback": cc}})
+				staticCluster := "fallback"
+				if backend.federated {
+					staticCluster = ""
+				}
+				k, err := New(Config{Audiences: []string{"aqsh", "other-audience"}, IncludeClusterInIdentity: qualify, TrustClusterExtra: backend.federated, ClusterName: staticCluster, TokenReview: cc})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -101,11 +106,12 @@ func TestTokenReviewEndpointContract(t *testing.T) {
 						if backend.federated {
 							wantCluster = source
 						}
-						wantIdentity := ""
+						wantIdentity, wantGroup := "system:serviceaccount:team:caller", "team"
 						if qualify {
-							wantIdentity = wantCluster + "/system:serviceaccount:team:caller"
+							wantIdentity = wantCluster + "/" + wantIdentity
+							wantGroup = wantCluster + "/" + wantGroup
 						}
-						if err != nil || p.Cluster != wantCluster || p.Username != "system:serviceaccount:team:caller" || p.Identity != wantIdentity || p.UID != "uid-"+source || !reflect.DeepEqual(p.Groups, []string{"team"}) {
+						if err != nil || p.Identity != wantIdentity || !reflect.DeepEqual(p.Groups, []string{wantGroup}) {
 							t.Fatalf("principal=%+v error=%v", p, err)
 						}
 					}
@@ -126,7 +132,7 @@ func TestHTTPRequiresExplicitOptIn(t *testing.T) {
 	if err := os.WriteFile(file, []byte("reviewer"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := New(Config{Audiences: []string{"aqsh"}, Clusters: map[string]ClusterConfig{"fallback": {APIServer: srv.URL, TokenFile: file}}})
+	_, err := New(Config{Audiences: []string{"aqsh"}, TokenReview: Endpoint{URL: srv.URL, TokenFile: file}})
 	if err == nil || calls.Load() != 0 {
 		t.Fatal("plain HTTP accepted without explicit opt-in")
 	}
@@ -135,34 +141,73 @@ func TestHTTPRequiresExplicitOptIn(t *testing.T) {
 			t.Errorf("allow_http accepted invalid endpoint: %s", raw)
 		}
 	}
-	path := filepath.Join(t.TempDir(), "auth.yaml")
-	if err := os.WriteFile(path, []byte("audiences: [aqsh]\ninclude_cluster_in_identity: true\nclusters:\n  fallback:\n    api_server: http://federated-auth.auth.svc:8080\n    allow_http: true\n    token_file: /mounted/reviewer\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := Load(path)
-	if err != nil || cfg.validate() != nil || !cfg.IncludeClusterInIdentity || !cfg.Clusters["fallback"].AllowHTTP {
-		t.Fatalf("config=%+v error=%v", cfg, err)
-	}
+
 }
 
-func TestMalformedClusterExtraDoesNotUseFallback(t *testing.T) {
-	for _, names := range [][]string{nil, {}, {""}, {"a", "b"}, {" a "}, {"a/b"}, {"a\\b"}, {"a\nb"}, {"a\x00b"}} {
-		t.Run(strings.Join(names, ","), func(t *testing.T) {
-			cc, _ := testCluster(t, func(w http.ResponseWriter, r *http.Request) {
-				json.NewEncoder(w).Encode(map[string]any{"status": map[string]any{
-					"authenticated": true, "audiences": []string{"aqsh"},
-					"user": map[string]any{"username": "user", "uid": "uid", "extra": map[string][]string{clusterExtraKey: names}},
-				}})
-			})
-			k, err := New(Config{Audiences: []string{"aqsh"}, IncludeClusterInIdentity: true, Clusters: map[string]ClusterConfig{"fallback": cc}})
-			if err != nil {
-				t.Fatal(err)
+func TestClusterExtraTrust(t *testing.T) {
+	for _, trust := range []bool{false, true} {
+		for _, qualify := range []bool{false, true} {
+			for _, tc := range []struct {
+				name  string
+				extra map[string][]string
+				valid bool
+			}{
+				{"missing", nil, false},
+				{"valid", map[string][]string{clusterExtraKey: {"source"}}, true},
+				{"empty", map[string][]string{clusterExtraKey: {}}, false},
+				{"multiple", map[string][]string{clusterExtraKey: {"a", "b"}}, false},
+				{"comma", map[string][]string{clusterExtraKey: {"a,b"}}, false},
+				{"slash", map[string][]string{clusterExtraKey: {"a/b"}}, false},
+				{"backslash", map[string][]string{clusterExtraKey: {"a\\b"}}, false},
+				{"whitespace", map[string][]string{clusterExtraKey: {" a "}}, false},
+				{"control", map[string][]string{clusterExtraKey: {"a\x00b"}}, false},
+			} {
+				t.Run(fmt.Sprintf("trusted=%v/qualified=%v/%s", trust, qualify, tc.name), func(t *testing.T) {
+					endpoint, _ := testCluster(t, func(w http.ResponseWriter, _ *http.Request) {
+						json.NewEncoder(w).Encode(map[string]any{"status": map[string]any{
+							"authenticated": true, "audiences": []string{"aqsh"},
+							"user": map[string]any{"username": "user", "groups": []string{"team"}, "extra": tc.extra},
+						}})
+					})
+					cluster := "local"
+					if trust {
+						cluster = ""
+					}
+					k, err := New(Config{Audiences: []string{"aqsh"}, IncludeClusterInIdentity: qualify, TrustClusterExtra: trust, ClusterName: cluster, TokenReview: endpoint})
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer k.Close()
+					handler := Middleware(k, "", "", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						p, _ := FromContext(r.Context())
+						wantIdentity, wantGroup := "user", "team"
+						if qualify {
+							prefix := "local/"
+							if trust {
+								prefix = "source/"
+							}
+							wantIdentity = prefix + wantIdentity
+							wantGroup = prefix + wantGroup
+						}
+						if p.Identity != wantIdentity || !reflect.DeepEqual(p.Groups, []string{wantGroup}) {
+							t.Errorf("wrong trusted identity: %+v", p)
+						}
+						w.WriteHeader(204)
+					}))
+					req := httptest.NewRequest("GET", "/tasks", nil)
+					req.Header.Set("Authorization", "Bearer caller")
+					out := httptest.NewRecorder()
+					handler.ServeHTTP(out, req)
+					want := 204
+					if trust && !tc.valid {
+						want = 401
+					}
+					if out.Code != want {
+						t.Fatalf("got %d want %d", out.Code, want)
+					}
+				})
 			}
-			defer k.Close()
-			if _, err := k.Authenticate(context.Background(), "caller"); !errors.Is(err, ErrUnavailable) {
-				t.Fatalf("malformed source silently used fallback: %v", err)
-			}
-		})
+		}
 	}
 }
 
@@ -188,7 +233,7 @@ func TestTokenReviewErrorsReachHTTPBoundary(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cc, _ := testCluster(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(tc.status); w.Write([]byte(tc.body)) })
-			k, err := New(Config{Audiences: []string{"aqsh"}, Clusters: map[string]ClusterConfig{"fallback": cc}})
+			k, err := New(Config{Audiences: []string{"aqsh"}, TokenReview: cc})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -217,7 +262,7 @@ func TestTokenReviewDoesNotFollowRedirects(t *testing.T) {
 	if err := os.WriteFile(file, []byte("reviewer"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	k, err := New(Config{Audiences: []string{"aqsh"}, Clusters: map[string]ClusterConfig{"fallback": {APIServer: source.URL, TokenFile: file, AllowHTTP: true}}})
+	k, err := New(Config{Audiences: []string{"aqsh"}, TokenReview: Endpoint{URL: source.URL, TokenFile: file, AllowHTTP: true}})
 	if err != nil {
 		t.Fatal(err)
 	}

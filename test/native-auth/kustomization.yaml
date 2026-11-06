@@ -8,9 +8,6 @@ resources:
 patches:
 - path: api.yaml
 configMapGenerator:
-- name: aqsh-native-auth
-  files:
-  - auth.yaml
 - name: aqsh-native-tasks
   files:
   - tasks.yaml

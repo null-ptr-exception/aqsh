@@ -1,8 +1,0 @@
-audiences: [aqsh-e2e]
-request_timeout: 5s
-include_cluster_in_identity: true
-clusters:
-  kind-e2e:
-    api_server: https://kubernetes.default.svc
-    ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-    token_file: /var/run/secrets/kubernetes.io/serviceaccount/token

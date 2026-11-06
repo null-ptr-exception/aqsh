@@ -1,170 +1,163 @@
 # Authentication
 
-aqsh supports two explicit authentication modes. Existing deployments keep
-`AQSH_AUTH_MODE=trusted-header` by default. In that mode, an authenticating proxy
-must be the only caller able to reach the API; aqsh trusts its configured identity
-and groups headers. `AQSH_REQUIRE_IDENTITY` retains its existing behavior.
+`AQSH_AUTH_MODE=trusted-header` is the default. An authenticating proxy must be
+the only caller able to reach the API; aqsh trusts its configured identity and
+groups headers. `AQSH_REQUIRE_IDENTITY` retains its existing behavior.
 
-`AQSH_AUTH_MODE=kubernetes` uses a small native TokenReview client. The same client
-can call a Kubernetes API or an external kube-federated-auth service. aqsh owns
-request authentication, verified identity mapping and task authorization. Cluster
-routing, JWKS, reviewer credential renewal and Secret persistence remain in the
-external service. aqsh does not embed either auth service or cache TokenReviews.
+`AQSH_AUTH_MODE=kubernetes` verifies bearer tokens through one TokenReview
+endpoint: either the Kubernetes API or an external kube-federated-auth service.
+Cluster routing, JWKS verification, credential renewal and Secret persistence
+remain in kube-federated-auth.
 
-## Native Kubernetes authentication
+## Configuration
 
-Run the API with `AQSH_MODE=api`, `AQSH_AUTH_MODE=kubernetes`, and
-`AQSH_AUTH_CONFIG=/etc/aqsh/auth.yaml`:
+Authentication uses environment variables, loaded at startup. Changes require an
+API restart. Unknown `AQSH_AUTH_*` settings, invalid booleans/durations and invalid
+combinations fail startup. Native settings require `AQSH_AUTH_MODE=kubernetes`.
+There is no separate authentication YAML file.
 
-```yaml
-audiences: [aqsh]
-request_timeout: 5s
-include_cluster_in_identity: false
-clusters:
-  production-a:
-    api_server: https://kubernetes.default.svc
-    ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-    token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+| Variable | Meaning | Default |
+|---|---|---|
+| `AQSH_AUTH_MODE` | `trusted-header` or `kubernetes` | `trusted-header` |
+| `AQSH_AUTH_URL` | TokenReview base URL; aqsh appends `/apis/authentication.k8s.io/v1/tokenreviews` | Required in native mode |
+| `AQSH_AUTH_CA_FILE` | PEM CA file for the endpoint | System roots |
+| `AQSH_AUTH_TOKEN_FILE` | Mounted reviewer credential | Required in native mode |
+| `AQSH_AUTH_AUDIENCES` | Comma-separated, nonempty caller audiences without surrounding whitespace | Required in native mode |
+| `AQSH_AUTH_ALLOW_HTTP` | Explicitly permit an unencrypted endpoint | `false` |
+| `AQSH_AUTH_REQUEST_TIMEOUT` | Timeout including waiting for TokenReview capacity; 1ms–1m | `5s` |
+| `AQSH_AUTH_CACHE_TTL` | Successful review lifetime; 0 disables caching, maximum 1m | `10s` |
+| `AQSH_AUTH_INCLUDE_CLUSTER_IN_IDENTITY` | Prefix both identity and groups with the source cluster | `false` |
+| `AQSH_AUTH_CLUSTER_NAME` | Local cluster name for a direct Kubernetes endpoint | Required for direct cluster qualification |
+| `AQSH_AUTH_TRUST_CLUSTER_EXTRA` | Trust the cluster name supplied by a federated endpoint | `false` |
+
+Direct Kubernetes example:
+
+```sh
+AQSH_MODE=api
+AQSH_AUTH_MODE=kubernetes
+AQSH_AUTH_URL=https://kubernetes.default.svc
+AQSH_AUTH_CA_FILE=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+AQSH_AUTH_TOKEN_FILE=/var/run/secrets/kubernetes.io/serviceaccount/token
+AQSH_AUTH_AUDIENCES=aqsh
 ```
 
-The configuration keeps the existing `clusters` shape but accepts exactly one
-TokenReview endpoint. `api_server` is its base URL; aqsh appends
-`/apis/authentication.k8s.io/v1/tokenreviews`. For a direct Kubernetes API,
-`production-a` is the configured fallback cluster name. An external endpoint can
-return identities from multiple clusters through that same endpoint.
+The reviewer needs `create` on `tokenreviews.authentication.k8s.io`. Its credential
+must target the Kubernetes API audience. Callers need tokens issued for an audience
+in `AQSH_AUTH_AUDIENCES`; a token issued only for the Kubernetes API is rejected
+when aqsh has a distinct configured audience.
 
-Configuration is loaded at startup; changes require an API restart. Unknown
-fields, invalid endpoints, missing audiences and unreadable credentials cause
-startup to fail. HTTPS is required unless `allow_http: true` is explicitly set on
-that endpoint. Omitting `ca_file` uses system roots. HTTPS certificate verification
-cannot be disabled, and redirects are never followed, including HTTPS-to-HTTP
-redirects. At most 32 TokenReviews run concurrently per API process. Waiting for
-capacity counts toward the configured timeout (default 5 seconds); timeouts return
-503. Authentication configuration must contain exactly one YAML document.
+HTTPS certificate verification is always enabled. URLs with credentials, query
+strings or fragments are rejected; redirects are never followed. Reviewer tokens
+are read from the file on each cache miss, so projected token rotation is picked
+up without restart. CA files are loaded at startup.
 
-The caller sends `Authorization: Bearer <token>` issued for an audience in the
-configured list. aqsh submits a TokenReview with those audiences using its
-**reviewer** credential. For a direct Kubernetes API, the reviewer needs `create`
-on `tokenreviews.authentication.k8s.io`. Its token must target the Kubernetes API
-audience, which may differ from the caller's `aqsh` audience.
+## Federated authentication and cluster trust
 
-The response must authenticate the caller, include a username, and return
-an audience intersecting the request. Authentication denial returns 401.
-UID is optional and is preserved when provided. A missing/null response status
-is an unavailable authentication backend (503), not an authentication denial.
-Connection failures, timeouts, non-success HTTP responses (including reviewer
-credential rejection and HTTP 5xx), response-body decode/size failures, or malformed
-cluster metadata return 503 without exposing backend details. A successful HTTP response reporting
-`authenticated: false` is treated as authentication denial, not classified by
-matching its error text. There is no fallback to forwarded identity headers.
+For kube-federated-auth, use the same client with these settings:
 
-All API endpoints require authentication except exact `GET /health` and
-`GET /metrics`. Limit access to these operational endpoints at the gateway or
-network boundary. The coverage debug endpoint also requires authentication.
-
-## Using kube-federated-auth
-
-Point the same client at the external service:
-
-```yaml
-audiences: [aqsh]
-request_timeout: 5s
-include_cluster_in_identity: false
-clusters:
-  fallback-cluster:
-    api_server: http://kube-federated-auth.auth.svc:8080
-    allow_http: true
-    token_file: /etc/aqsh/auth/reviewer-token
+```sh
+AQSH_MODE=api
+AQSH_AUTH_MODE=kubernetes
+AQSH_AUTH_URL=http://kube-federated-auth.auth.svc:8080
+AQSH_AUTH_ALLOW_HTTP=true
+AQSH_AUTH_TOKEN_FILE=/etc/aqsh/reviewer-token
+AQSH_AUTH_AUDIENCES=aqsh
+AQSH_AUTH_TRUST_CLUSTER_EXTRA=true
 ```
 
-`allow_http` is an explicit operator trust decision for a trusted in-cluster
-connection. aqsh does not infer network boundaries or automatically trust a
-`.svc` hostname. Plain HTTP sends both the reviewer credential and caller token
-without transport encryption; use HTTPS for endpoints outside that trusted
-network, or expose the service through a TLS endpoint and omit `allow_http`.
+The reviewer credential must satisfy kube-federated-auth's caller authentication
+policy, including `authorized_clients` when configured. Credentials and permissions
+for each source cluster stay in the external service.
 
-The reviewer credential must be accepted by kube-federated-auth's caller
-authentication policy, including `authorized_clients` when configured. The
-external service owns the credentials and TokenReview permissions needed in each
-source cluster; those credentials are not mounted in aqsh. aqsh sends requests
-only to its configured endpoint and does not inspect token issuers or fetch JWKS.
+`AQSH_AUTH_ALLOW_HTTP=true` is an operator trust decision: both reviewer and caller
+tokens travel unencrypted. Use HTTPS outside a trusted network. A `.svc` hostname
+does not automatically enable HTTP or trust cluster metadata.
 
-For an authenticated response, aqsh reads the cluster name from
-`status.user.extra["authentication.kubernetes.io/cluster-name"]`. A single valid
-value takes precedence over the configured fallback. If the key is absent, aqsh
-uses the configured name, preserving direct Kubernetes API support. If the key
-is present but empty, contains multiple values, or has an invalid value, aqsh
-returns 503 instead of silently using the fallback. Cluster names must be
-nonempty and contain no whitespace, control characters, `/` or `\`.
+With `AQSH_AUTH_TRUST_CLUSTER_EXTRA=false`, response cluster metadata is ignored,
+including metadata supplied by Kubernetes authentication webhooks. Direct cluster
+qualification uses only the configured `AQSH_AUTH_CLUSTER_NAME`.
 
-Each authenticated request causes a TokenReview call. Any caching and its effect
-on revocation timing belong to the configured endpoint; aqsh adds no second
-cache layer.
+With `AQSH_AUTH_TRUST_CLUSTER_EXTRA=true`, every successful review must include
+exactly one valid value in
+`status.user.extra["authentication.kubernetes.io/cluster-name"]`. Missing or
+malformed values return 401. A static `AQSH_AUTH_CLUSTER_NAME` cannot be combined
+with this option, so federation cannot fall back to a shared static cluster.
+Cluster names exclude whitespace, control characters, commas, `/` and `\`.
 
 ## Identity and task authorization
 
-By default, task identity is the verified username returned by TokenReview.
-For example, `system:serviceaccount:team:caller` matches the same `allowed_users`
-entry across trusted clusters. The same namespace/service account therefore
-identifies one workload for task authorization across those clusters. Cluster
-and UID remain recorded separately in the Principal for provenance.
+By default, identity and groups are the verified values returned by TokenReview.
+The same namespace/serviceaccount and group names therefore match the same task
+ACLs across trusted clusters.
 
-Set `include_cluster_in_identity: true` to use `<cluster>/<username>` instead:
+Set `AQSH_AUTH_INCLUDE_CLUSTER_IN_IDENTITY=true` to prefix **both** the username
+and every group with `<cluster>/`. Direct Kubernetes also requires
+`AQSH_AUTH_CLUSTER_NAME`; federated mode uses its trusted response metadata.
 
 ```yaml
 allowed_users:
   - cluster-a/system:serviceaccount:team:caller
+allowed_groups:
+  - cluster-a/system:serviceaccounts:team
 ```
 
-This changes `allowed_users` matching, `${identity}` in values URLs,
-`AQSH_IDENTITY`, the queued `identity` and the access-log identity. Update matching
-ACLs and downstream identity consumers when enabling it. `principal.username`
-always retains the original TokenReview username; `principal.identity` is added
-when qualification is enabled. Groups are unchanged, so this option does not
-scope `allowed_groups` to a cluster.
+The existing user/group ACL rule is OR: either an allowed user or an allowed group
+can submit. In qualified mode, unprefixed groups are not retained as aliases.
+Update ACLs and downstream identity consumers when enabling qualification.
+The same verified identity/groups flow into task authorization, `${identity}` and
+`${groups}` in values URLs, queued `identity`/`groups`, `AQSH_IDENTITY`/`AQSH_GROUPS`
+in scripts, execution responses and access logs.
 
-The middleware discards forwarded identity, groups and cluster headers, strips
-the bearer token, and passes a verified Principal through request context.
-`allowed_groups`, `${groups}` and `AQSH_GROUPS` keep their existing group
-semantics. Group names must be representable as CSV without commas, line breaks
-or surrounding whitespace; ambiguous names fail authentication. Bearer and
-reviewer tokens are never queued or passed to scripts.
+Groups must be representable as CSV without commas, line breaks, NUL or surrounding
+whitespace. Usernames must be nonempty and exclude line breaks and NUL. UID is
+optional. The request context contains only the identity/groups needed for
+authorization; no extra Principal is persisted in the queue. Forwarded identity,
+groups and cluster headers are discarded, and bearer credentials are never passed
+to task scripts or queued.
 
-This integration authenticates requests. It preserves the existing execution
-read policy: authenticated callers who know an execution ID can read its status,
-result and logs. Cluster-qualified identity does not add execution ownership or
-tenant isolation. Trust only endpoints and source clusters whose authenticated
-users may access this aqsh instance.
+All application routes require authentication. Exact `GET /health` and
+`GET /metrics` remain public for probes/scrapers; control their network access at
+the gateway. Authentication denials, audience mismatches and invalid trusted
+cluster metadata return 401. Transport failures, non-success endpoint responses
+(including reviewer credential rejection), or invalid/missing response status
+return 503 without exposing credentials or backend response details.
 
-## Separate API and worker credentials
+## Short-lived review cache
 
-Native authentication rejects `AQSH_MODE=both`. Deploy a separate worker Pod
-using `AQSH_MODE=worker`, with the same Redis/task configuration but without the
-auth configuration, reviewer token mounts, or TokenReview RBAC. Workers ignore
-the API authentication configuration.
+Each API process caches up to 256 successful reviews, keyed by a SHA-256 token
+hash. Only identity/groups are cached. Entries expire at a fixed deadline measured
+from the start of the review; cache hits do not extend it. Errors and denials are
+not cached, expired entries are never reused on failure, and excess successful
+reviews are served without caching when capacity is full. At most 32 TokenReview
+requests run concurrently, with capacity wait included in the request timeout.
 
-Runbooks execute shell commands with access to their process environment and
-filesystem. Use separate Pods and service accounts so the worker does not share
-the API's reviewer credentials, and grant workers only the database/cluster
-permissions their tasks need.
+A live cache entry avoids repeated endpoint calls during polling or brief outages.
+Token expiry, revocation or membership changes can take up to the configured TTL
+to be reflected after a successful review. This delay is additional to any cache
+in the configured endpoint. Set `AQSH_AUTH_CACHE_TTL=0s` to validate every request.
+Caching does not replace task authorization, which runs on every submission.
 
-Projected reviewer tokens are read from `token_file` for every TokenReview so
-rotation is picked up without restarting the API. CA files are loaded at startup;
-restart the API after CA changes. aqsh does not renew tokens or persist them in
-Secrets.
+## Deployment and migration
 
-## Migrating from kube-auth-proxy
+Native authentication requires `AQSH_MODE=api` and a separate worker Pod with
+`AQSH_MODE=worker`. The worker must have no reviewer credential mounts or
+TokenReview RBAC. Workers ignore API authentication settings. Give runbooks only
+the filesystem, database and cluster permissions their tasks need.
 
-1. Create a dedicated API service account and mount its reviewer credential and
-   auth configuration only in the API Pod. Grant direct TokenReview permission
-   or authorize that caller in the external federated-auth service as appropriate.
-2. Run a separate worker Pod and verify its task permissions and queue settings.
-3. Point the gateway/Service directly at the native API port. Preserve the
-   caller's Authorization header; do not substitute the gateway's identity.
-4. Verify allowed and denied task submissions before removing aqsh's proxy
-   sidecar. Keep kube-federated-auth and other auth services used by applications.
+To replace kube-auth-proxy:
+
+1. Configure the separate API and worker, mounting the reviewer credential only
+   in the API and granting its TokenReview permission or federated caller access.
+2. Point the gateway/Service at the native API port and preserve the caller's
+   Authorization header.
+3. Verify accepted and denied task submissions, then remove the proxy sidecar.
+   Keep the external kube-federated-auth service for multi-cluster routing.
 
 To roll back, restore the authenticating proxy route and explicitly select
-`trusted-header`. Ensure that callers cannot directly reach the header-trusting
-backend. Existing task definitions and shell scripts keep their identity behavior
-unless cluster qualification is explicitly enabled.
+`trusted-header`, removing native `AQSH_AUTH_*` settings. Restrict backend access
+to that proxy. Existing tasks retain their identity format unless qualification
+is explicitly enabled.
+
+Execution reads retain the existing policy: authenticated callers who know an
+execution ID can read its status, result and logs. Cluster-qualified task ACLs do
+not provide execution ownership isolation. Owner checks are a separate follow-up.

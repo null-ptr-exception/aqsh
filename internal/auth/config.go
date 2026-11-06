@@ -2,78 +2,61 @@ package auth
 
 import (
 	"fmt"
-	"io"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 	"unicode"
-
-	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
-	IncludeClusterInIdentity bool                     `yaml:"include_cluster_in_identity"`
-	Audiences                []string                 `yaml:"audiences"`
-	RequestTimeout           time.Duration            `yaml:"request_timeout"`
-	Clusters                 map[string]ClusterConfig `yaml:"clusters"`
+	IncludeClusterInIdentity bool
+	TrustClusterExtra        bool
+	ClusterName              string
+	Audiences                []string
+	RequestTimeout           time.Duration
+	CacheTTL                 time.Duration
+	TokenReview              Endpoint
 }
 
-type ClusterConfig struct {
-	AllowHTTP bool   `yaml:"allow_http"`
-	APIServer string `yaml:"api_server"`
-	CAFile    string `yaml:"ca_file"`
-	TokenFile string `yaml:"token_file"`
+type Endpoint struct {
+	URL       string
+	CAFile    string
+	TokenFile string
+	AllowHTTP bool
 }
 
-// Load reads exactly one authentication configuration document with known fields.
-func Load(path string) (Config, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return Config{}, err
-	}
-	defer f.Close()
-	var cfg Config
-	d := yaml.NewDecoder(f)
-	d.KnownFields(true)
-	if err := d.Decode(&cfg); err != nil {
-		return cfg, err
-	}
-	var extra any
-	if err := d.Decode(&extra); err != io.EOF {
-		if err != nil {
-			return cfg, fmt.Errorf("reading trailing authentication config: %w", err)
-		}
-		return cfg, fmt.Errorf("authentication config must contain exactly one YAML document")
-	}
-	return cfg, nil
-}
-
-func (c *Config) validate() error {
+func (c *Config) Validate() error {
 	if len(c.Audiences) == 0 {
-		return fmt.Errorf("at least one audience is required")
+		return fmt.Errorf("AQSH_AUTH_AUDIENCES requires at least one audience")
 	}
 	for _, audience := range c.Audiences {
 		if strings.TrimSpace(audience) != audience || audience == "" {
-			return fmt.Errorf("audiences must be nonempty without surrounding whitespace")
+			return fmt.Errorf("AQSH_AUTH_AUDIENCES must contain nonempty audiences without surrounding whitespace")
 		}
 	}
 	if c.RequestTimeout == 0 {
 		c.RequestTimeout = 5 * time.Second
 	}
 	if c.RequestTimeout < time.Millisecond || c.RequestTimeout > time.Minute {
-		return fmt.Errorf("request_timeout must be between 1ms and 1m")
+		return fmt.Errorf("AQSH_AUTH_REQUEST_TIMEOUT must be between 1ms and 1m")
 	}
-	if len(c.Clusters) != 1 {
-		return fmt.Errorf("exactly one TokenReview endpoint is required")
+	if c.CacheTTL < 0 || c.CacheTTL > time.Minute {
+		return fmt.Errorf("AQSH_AUTH_CACHE_TTL must be between 0 and 1m")
 	}
-	for id, cluster := range c.Clusters {
-		if !validClusterName(id) || cluster.TokenFile == "" {
-			return fmt.Errorf("each endpoint requires a stable fallback cluster ID and token_file")
-		}
-		if !validEndpoint(cluster.APIServer, cluster.AllowHTTP) {
-			return fmt.Errorf("cluster %q requires an HTTPS api_server (or explicit allow_http) without credentials, query or fragment", id)
-		}
+	if c.ClusterName != "" && !validClusterName(c.ClusterName) {
+		return fmt.Errorf("AQSH_AUTH_CLUSTER_NAME must be a single CSV-safe identity segment")
+	}
+	if c.IncludeClusterInIdentity && !c.TrustClusterExtra && c.ClusterName == "" {
+		return fmt.Errorf("AQSH_AUTH_CLUSTER_NAME is required for direct cluster-qualified identity")
+	}
+	if c.TrustClusterExtra && c.ClusterName != "" {
+		return fmt.Errorf("AQSH_AUTH_CLUSTER_NAME cannot be combined with AQSH_AUTH_TRUST_CLUSTER_EXTRA")
+	}
+	if c.TokenReview.TokenFile == "" {
+		return fmt.Errorf("AQSH_AUTH_TOKEN_FILE is required")
+	}
+	if !validEndpoint(c.TokenReview.URL, c.TokenReview.AllowHTTP) {
+		return fmt.Errorf("AQSH_AUTH_URL requires HTTPS (or AQSH_AUTH_ALLOW_HTTP) without credentials, query or fragment")
 	}
 	return nil
 }
@@ -86,6 +69,6 @@ func validEndpoint(raw string, allowHTTP bool) bool {
 // Cluster names are a single identity segment when qualification is enabled.
 func validClusterName(name string) bool {
 	return name != "" && strings.IndexFunc(name, func(r rune) bool {
-		return unicode.IsSpace(r) || unicode.IsControl(r) || r == '/' || r == '\\'
+		return unicode.IsSpace(r) || unicode.IsControl(r) || r == '/' || r == '\\' || r == ','
 	}) == -1
 }
