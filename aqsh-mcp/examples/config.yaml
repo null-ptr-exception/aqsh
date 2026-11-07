@@ -1,0 +1,16 @@
+bind: 127.0.0.1:8090
+public_url: http://127.0.0.1:8090/mcp
+backend_url: http://127.0.0.1:8080
+oauth:
+  issuer: https://auth.example.com/realms/ops
+  required_scopes: [aqsh:read]
+  groups_claim: groups
+  group_mapping:
+    operations: db-readers
+tools:
+  - name: inspect
+    task: inspect
+    description: Inspect a target using the project's reviewed read-only task.
+    read_only: true
+    result_mode: json
+    max_result_bytes: 65536
