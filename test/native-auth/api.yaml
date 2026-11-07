@@ -22,6 +22,8 @@ spec:
           value: /var/run/secrets/kubernetes.io/serviceaccount/token
         - name: AQSH_AUTH_AUDIENCES
           value: aqsh-e2e
+        - name: AQSH_EXECUTION_OWNER_ONLY
+          value: "true"
       volumes:
       - name: tasks-config
         configMap:

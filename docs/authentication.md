@@ -162,6 +162,10 @@ To roll back, restore the authenticating proxy route and explicitly select
 to that proxy. Existing tasks retain their identity format unless qualification
 is explicitly enabled.
 
-Execution reads retain the existing policy: authenticated callers who know an
-execution ID can read its status, result and logs. Cluster-qualified task ACLs do
-not provide execution ownership isolation. Owner checks are a separate follow-up.
+Execution reads default to the existing policy: authenticated callers who know an
+execution ID can read its status, result and logs. Set `AQSH_EXECUTION_OWNER_ONLY=true`
+on all API instances to restrict these reads to the recorded submitting identity.
+This uses the complete cluster-qualified identity when qualification is enabled;
+shared identities remain shared across clusters when it is disabled. Enabling
+ownership hides records without an owner. Changing identity formats or reusing an
+identity affects access to older records. See [execution ownership](api.md#execution-ownership).

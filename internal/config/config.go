@@ -29,6 +29,9 @@ type Config struct {
 	GroupsHeader      string
 	LogLevel          slog.Level
 	Redis             RedisConfig
+
+	ExecutionOwnerOnly bool
+	ownerEnvErr        error
 }
 
 type RedisConfig struct {
@@ -69,6 +72,9 @@ func Load() *Config {
 	}
 	// Validate after CLI mode overrides; workers do not need API auth settings.
 	cfg.Auth, cfg.authEnvErr = loadAuthEnv(cfg.AuthMode)
+	if value, ok := os.LookupEnv("AQSH_EXECUTION_OWNER_ONLY"); ok {
+		cfg.ExecutionOwnerOnly, cfg.ownerEnvErr = strconv.ParseBool(value)
+	}
 	return cfg
 }
 
@@ -130,6 +136,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Mode == "worker" {
 		return nil
+	}
+	if c.ownerEnvErr != nil {
+		return fmt.Errorf("invalid AQSH_EXECUTION_OWNER_ONLY: expected a boolean")
 	}
 	if c.authEnvErr != nil {
 		return c.authEnvErr
