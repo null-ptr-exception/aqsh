@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aqsh
+  namespace: aqsh
+spec:
+  template:
+    spec:
+      serviceAccountName: aqsh-api-reviewer
+      containers:
+      - name: aqsh
+        env:
+        - name: AQSH_MODE
+          value: api
+        - name: AQSH_AUTH_MODE
+          value: kubernetes
+        - name: AQSH_AUTH_URL
+          value: https://kubernetes.default.svc
+        - name: AQSH_AUTH_CA_FILE
+          value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        - name: AQSH_AUTH_TOKEN_FILE
+          value: /var/run/secrets/kubernetes.io/serviceaccount/token
+        - name: AQSH_AUTH_AUDIENCES
+          value: aqsh-e2e
+      volumes:
+      - name: tasks-config
+        configMap:
+          name: aqsh-native-tasks
+      - name: task-scripts
+        configMap:
+          name: aqsh-native-scripts
+          defaultMode: 0755

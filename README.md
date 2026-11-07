@@ -363,6 +363,17 @@ If client disconnects and reconnects:
 | `AQSH_REDIS_PASSWORD` | Redis password | - |
 | `AQSH_WORKER_CONCURRENCY` | Concurrent tasks per worker | `10` |
 | `AQSH_WORKER_QUEUES` | Queues to process (comma-separated) | `default` |
+| `AQSH_AUTH_MODE` | `trusted-header` or `kubernetes` (requires separate API/worker) | `trusted-header` |
+| `AQSH_AUTH_URL` | Kubernetes or external TokenReview base URL | - |
+| `AQSH_AUTH_CA_FILE` | TokenReview CA file | System roots |
+| `AQSH_AUTH_TOKEN_FILE` | Mounted reviewer token file | - |
+| `AQSH_AUTH_AUDIENCES` | Comma-separated caller audiences | - |
+| `AQSH_AUTH_ALLOW_HTTP` | Explicitly allow an unencrypted TokenReview endpoint | `false` |
+| `AQSH_AUTH_REQUEST_TIMEOUT` | TokenReview timeout including capacity wait | `5s` |
+| `AQSH_AUTH_CACHE_TTL` | Successful review cache lifetime; `0s` disables, maximum `1m` | `10s` |
+| `AQSH_AUTH_INCLUDE_CLUSTER_IN_IDENTITY` | Prefix verified identity and groups with cluster | `false` |
+| `AQSH_AUTH_CLUSTER_NAME` | Local cluster name for direct cluster qualification | - |
+| `AQSH_AUTH_TRUST_CLUSTER_EXTRA` | Trust cluster metadata from a federated endpoint | `false` |
 | `AQSH_IDENTITY_HEADER` | Header name for user identity | `X-Forwarded-User` |
 | `AQSH_REQUIRE_IDENTITY` | Require identity header (401 if missing) | `false` |
 | `AQSH_GROUPS_HEADER` | Header name for user groups | `X-Forwarded-Groups` |
@@ -422,7 +433,11 @@ Not in scope for initial release, but possible future additions:
 
 ## Authorization
 
-aqsh supports identity tracking and per-task group authorization via HTTP headers, designed for use with an authenticating reverse proxy (e.g., [kube-auth-proxy](https://github.com/rophy/kube-auth-proxy)).
+aqsh supports native TokenReview authentication against Kubernetes or an external
+kube-federated-auth service, and identity tracking with
+per-task user/group authorization. Existing authenticating proxy deployments keep
+their header-based behavior by default. See [authentication](docs/authentication.md)
+for native mode, credential separation, and migration.
 
 ### Identity Tracking
 

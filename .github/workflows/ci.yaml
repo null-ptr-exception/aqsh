@@ -52,6 +52,11 @@ jobs:
       - name: Run Skaffold E2E
         run: make test-e2e KUBE_CONTEXT=kind-aqsh-e2e E2E_ARGS=--coverage
 
+      - name: Run native TokenReview E2E
+        run: |
+          make test-e2e KUBE_CONTEXT=kind-aqsh-e2e E2E_ARGS="--profile native-auth"
+          make test-e2e KUBE_CONTEXT=kind-aqsh-e2e E2E_ARGS="--profile native-auth,qualified-identity"
+
       - name: Delete test cluster
         if: always()
         run: kind delete cluster --name aqsh-e2e

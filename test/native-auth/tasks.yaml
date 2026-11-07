@@ -1,0 +1,25 @@
+defaults:
+  timeout: 30s
+  max_retry: 0
+tasks:
+  identity:
+    script: identity.sh
+    allowed_users: [system:serviceaccount:aqsh:aqsh-e2e-caller]
+  qualified-identity:
+    script: identity.sh
+    allowed_users: [kind-e2e/system:serviceaccount:aqsh:aqsh-e2e-caller]
+  forbidden-user:
+    script: identity.sh
+    allowed_users: [system:serviceaccount:aqsh:someone-else]
+  serviceaccount-group:
+    script: identity.sh
+    allowed_groups: [system:serviceaccounts:aqsh]
+  forbidden-group:
+    script: identity.sh
+    allowed_groups: [ops-team]
+  qualified-serviceaccount-group:
+    script: identity.sh
+    allowed_groups: [kind-e2e/system:serviceaccounts:aqsh]
+  other-cluster-group:
+    script: identity.sh
+    allowed_groups: [other-cluster/system:serviceaccounts:aqsh]

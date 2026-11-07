@@ -5,11 +5,15 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/rophy/aqsh/internal/auth"
 )
 
 func TestLoad(t *testing.T) {
 	// Clear any existing env vars
 	envVars := []string{
+		"AQSH_AUTH_MODE",
+		"AQSH_AUTH_CONFIG",
 		"AQSH_MODE",
 		"AQSH_BIND",
 		"AQSH_TASKS_CONFIG",
@@ -131,6 +135,24 @@ func TestLoad(t *testing.T) {
 			t.Errorf("expected SentinelMaster 'mymaster', got %q", cfg.Redis.SentinelMaster)
 		}
 	})
+}
+
+func TestValidateAuthenticationMode(t *testing.T) {
+	for _, tc := range []struct {
+		mode, authMode string
+		valid          bool
+	}{
+		{"both", "trusted-header", true}, {"api", "kubernetes", true},
+		{"both", "kubernetes", false}, {"api", "typo", false},
+		{"typo", "trusted-header", false}, {"worker", "kubernetes", true},
+	} {
+		cfg := &Config{Mode: tc.mode, AuthMode: tc.authMode, Auth: auth.Config{
+			Audiences: []string{"aqsh"}, TokenReview: auth.Endpoint{URL: "https://api", TokenFile: "/not-mounted/token"},
+		}}
+		if err := cfg.Validate(); (err == nil) != tc.valid {
+			t.Errorf("%+v: %v", tc, err)
+		}
+	}
 }
 
 func TestGetEnvInt(t *testing.T) {

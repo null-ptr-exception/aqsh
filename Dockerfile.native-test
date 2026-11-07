@@ -1,0 +1,13 @@
+FROM golang:1.24-alpine AS builder
+ARG DEBUG=false
+WORKDIR /build
+COPY go.mod go.sum ./
+RUN go mod download
+COPY internal/ internal/
+COPY test/native-auth/native_auth_test.go test/native-auth/native_auth_test.go
+RUN CGO_ENABLED=0 go test -c -o /native-auth-test ./test/native-auth
+
+FROM alpine:3.20
+COPY --from=builder /native-auth-test /native-auth-test
+ENTRYPOINT ["/native-auth-test", "-require-e2e"]
+CMD ["-test.v", "-test.timeout=120s"]

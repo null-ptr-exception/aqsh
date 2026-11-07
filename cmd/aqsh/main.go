@@ -51,11 +51,8 @@ func main() {
 		cfg.Bind = *bind
 	}
 
-	// Validate mode
-	switch cfg.Mode {
-	case "api", "worker", "both":
-	default:
-		slog.Error("invalid mode", "mode", cfg.Mode)
+	if err := cfg.Validate(); err != nil {
+		slog.Error("invalid configuration", "error", err)
 		os.Exit(1)
 	}
 
