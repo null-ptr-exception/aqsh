@@ -132,6 +132,7 @@ Inputs with `values_url` perform additional per-parameter authorization: the rem
   "id": "task_01HQXK5V7Z8Y9ABCDEF",
   "queue": "default",
   "status": "completed",
+  "task": "deploy",
   "identity": "alice@example.com",
   "groups": "deploy-team,platform-team",
   "created_at": "2025-12-28T10:00:00Z",
@@ -155,6 +156,17 @@ Inputs with `values_url` perform additional per-parameter authorization: the rem
 | `completed` | Finished successfully (exit code 0) |
 | `failed` | Failed after all retries |
 | `retrying` | Failed, scheduled for retry |
+
+#### Structured JSON results
+
+Execution responses include `task`, the task name stored at submission.
+Use `GET /executions/{id}?include_result_json=true` to request `result.json`
+in addition to the existing `result.data` string. JSON values, including `null`,
+are preserved without float conversion. Data is limited to 1 MiB before parsing.
+When unavailable, `result.json_omitted` is `absent`, `empty`, `too_large`, or
+`invalid_json`; no partial JSON is returned. Without the query parameter the
+result format is unchanged. `/health` advertises `result_json_supported: true`.
+This is a general REST feature; it does not classify or sanitize script output.
 
 ### GET /executions/{id}/logs - Stream Execution Logs
 

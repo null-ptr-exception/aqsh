@@ -329,6 +329,7 @@ func (s *Server) handleGetExecution(w http.ResponseWriter, r *http.Request) {
 	// Get created_at and identity from task payload
 	var payload worker.TaskPayload
 	if err := json.Unmarshal(info.Payload, &payload); err == nil {
+		resp["task"] = payload.Name
 		if !payload.CreatedAt.IsZero() {
 			resp["created_at"] = payload.CreatedAt.Format(time.RFC3339)
 		}
@@ -353,6 +354,9 @@ func (s *Server) handleGetExecution(w http.ResponseWriter, r *http.Request) {
 			var result worker.TaskResult
 			if err := json.Unmarshal(info.Result, &result); err == nil {
 				resp["result"] = result
+				if r.URL.Query().Get("include_result_json") == "true" {
+					resp["result"] = structuredResult(result)
+				}
 			}
 		}
 	}
@@ -442,10 +446,11 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.jsonResponse(w, http.StatusOK, map[string]any{
-		"status":  "healthy",
-		"version": s.version,
-		"redis":   redisStatus,
-		"mode":    s.cfg.Mode,
+		"status":                "healthy",
+		"version":               s.version,
+		"redis":                 redisStatus,
+		"mode":                  s.cfg.Mode,
+		"result_json_supported": true,
 	})
 }
 
