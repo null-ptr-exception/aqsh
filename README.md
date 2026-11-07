@@ -376,6 +376,7 @@ If client disconnects and reconnects:
 | `AQSH_AUTH_TRUST_CLUSTER_EXTRA` | Trust cluster metadata from a federated endpoint | `false` |
 | `AQSH_IDENTITY_HEADER` | Header name for user identity | `X-Forwarded-User` |
 | `AQSH_REQUIRE_IDENTITY` | Require identity header (401 if missing) | `false` |
+| `AQSH_EXECUTION_OWNER_ONLY` | Require a submitting identity and restrict execution status/results/logs to that exact identity | `false` |
 | `AQSH_GROUPS_HEADER` | Header name for user groups | `X-Forwarded-Groups` |
 | `AQSH_LOG_RETENTION` | Log stream retention | `24h` |
 | `AQSH_RESULT_RETENTION` | Completed task retention | `72h` |

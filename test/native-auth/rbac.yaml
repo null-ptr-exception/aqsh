@@ -31,3 +31,35 @@ kind: ServiceAccount
 metadata:
   name: aqsh-e2e-caller
   namespace: aqsh
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aqsh-e2e-other
+  namespace: aqsh
+---
+# The driver may mint only the second unprivileged test identity's token.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aqsh-e2e-other-token
+  namespace: aqsh
+rules:
+- apiGroups: [""]
+  resources: [serviceaccounts/token]
+  resourceNames: [aqsh-e2e-other]
+  verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aqsh-e2e-other-token
+  namespace: aqsh
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aqsh-e2e-other-token
+subjects:
+- kind: ServiceAccount
+  name: aqsh-e2e-caller
+  namespace: aqsh

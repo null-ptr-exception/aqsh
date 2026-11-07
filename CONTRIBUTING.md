@@ -101,11 +101,16 @@ valid and wrong audiences, and a worker without reviewer credentials. The driver
 checks forged headers, shared/qualified user and group ACLs, verified identity in
 Redis, worker identity, execution results and SSE logs. Tokens for both another
 service and the Kubernetes API audience must be rejected by aqsh. The caller has
-no TokenReview or ServiceAccount-read permission. Both overlays include the namespace for
+no TokenReview or ServiceAccount-read permission; it can mint an aqsh-audience token
+only for the second unprivileged test ServiceAccount. Both overlays include the namespace for
 Skaffold deployment and cleanup. Coverage collection is baseline-only.
 
-These tests exercise a real single-cluster API; kube-federated-auth and execution
-ownership isolation are outside their scope. Ordinary `go test ./...` skips the
+Both modes enable execution ownership and check that another authenticated member
+of the same group cannot read the owner's results or logs, including with forged
+headers and SSE reconnects. Deleted executions cannot expose retained logs.
+
+These tests exercise a real single-cluster API; kube-federated-auth is outside
+their scope. Ordinary `go test ./...` skips the
 in-cluster driver unless `AQSH_NATIVE_E2E_URL` is set. The test image always passes
 `-require-e2e`, so a missing URL fails instead of reporting a skipped success.
 

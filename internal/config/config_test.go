@@ -3,11 +3,48 @@ package config
 import (
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/rophy/aqsh/internal/auth"
 )
+
+// Ownership is opt-in, but an invalid value must not silently disable it.
+func TestExecutionOwnerOnlyConfig(t *testing.T) {
+	t.Setenv("AQSH_MODE", "api")
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(key, "AQSH_AUTH_") {
+			t.Setenv(key, "")
+			os.Unsetenv(key)
+		}
+	}
+	t.Setenv("AQSH_EXECUTION_OWNER_ONLY", "")
+	os.Unsetenv("AQSH_EXECUTION_OWNER_ONLY")
+	if c := Load(); c.ExecutionOwnerOnly || c.Validate() != nil {
+		t.Fatal("owner-only reads must default off")
+	}
+	for _, value := range []string{"true", "false", "1", "0", "", "tru", " true "} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("AQSH_EXECUTION_OWNER_ONLY", value)
+			c := Load()
+			valid := value == "true" || value == "false" || value == "1" || value == "0"
+			err := c.Validate()
+			if (err == nil) != valid || (!valid && !strings.Contains(err.Error(), "AQSH_EXECUTION_OWNER_ONLY")) {
+				t.Fatalf("unexpected validation: %v", err)
+			}
+			if valid && c.ExecutionOwnerOnly != (value == "true" || value == "1") {
+				t.Fatal("wrong owner-only setting")
+			}
+		})
+	}
+	t.Setenv("AQSH_MODE", "worker")
+	t.Setenv("AQSH_EXECUTION_OWNER_ONLY", "typo")
+	if err := Load().Validate(); err != nil {
+		t.Fatalf("worker must ignore API-only settings: %v", err)
+	}
+}
 
 func TestLoad(t *testing.T) {
 	// Clear any existing env vars

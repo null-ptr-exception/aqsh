@@ -139,7 +139,7 @@ func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 	taskName := r.PathValue("name")
 
 	identity, groups := s.caller(r)
-	if s.cfg.RequireIdentity && identity == "" {
+	if (s.cfg.RequireIdentity && identity == "") || (s.cfg.ExecutionOwnerOnly && strings.TrimSpace(identity) == "") {
 		s.jsonError(w, http.StatusUnauthorized, "identity header required")
 		return
 	}
@@ -293,26 +293,8 @@ func (s *Server) handleGetTaskDef(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetExecution(w http.ResponseWriter, r *http.Request) {
 	taskID := r.PathValue("id")
 
-	// Try all queues the worker is configured to process
-	allQueues := append([]string{"default"}, s.cfg.WorkerQueues...)
-	seen := make(map[string]bool)
-
-	var info *asynq.TaskInfo
-	var err error
-
-	for _, q := range allQueues {
-		if seen[q] {
-			continue
-		}
-		seen[q] = true
-		info, err = s.inspector.GetTaskInfo(q, taskID)
-		if err == nil {
-			break
-		}
-	}
-
-	if err != nil {
-		s.jsonError(w, http.StatusNotFound, "task not found")
+	info := s.executionInfo(w, r)
+	if info == nil {
 		return
 	}
 
@@ -366,6 +348,10 @@ func (s *Server) handleGetExecution(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 	taskID := r.PathValue("id")
+	// Check ownership before reading logs or sending any SSE headers.
+	if s.cfg.ExecutionOwnerOnly && s.executionInfo(w, r) == nil {
+		return
+	}
 	follow := r.URL.Query().Get("follow") != "false"
 
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -442,10 +428,11 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.jsonResponse(w, http.StatusOK, map[string]any{
-		"status":  "healthy",
-		"version": s.version,
-		"redis":   redisStatus,
-		"mode":    s.cfg.Mode,
+		"status":               "healthy",
+		"version":              s.version,
+		"redis":                redisStatus,
+		"mode":                 s.cfg.Mode,
+		"execution_owner_only": s.cfg.ExecutionOwnerOnly,
 	})
 }
 

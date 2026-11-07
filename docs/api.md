@@ -195,10 +195,35 @@ data: Deployment complete.
   "status": "healthy",
   "version": "0.1.0",
   "redis": "connected",
-  "mode": "api"
+  "mode": "api",
+  "execution_owner_only": false
 }
 ```
 
 ### GET /metrics - Prometheus Metrics
 
 Returns Prometheus-formatted metrics. See [Observability](../README.md#observability) for details.
+
+### Execution ownership
+
+Set `AQSH_EXECUTION_OWNER_ONLY=true` on every API instance sharing the queue to
+require a nonblank identity on submission and restrict `GET /executions/{id}`
+(including results) and `GET /executions/{id}/logs` to that exact recorded identity.
+The default is false. Invalid boolean values fail API startup; workers ignore this
+API-only setting. `/health` reports `execution_owner_only` for REST adapters.
+
+Native mode uses the verified TokenReview identity. Trusted-header mode requires
+an authenticating proxy that overwrites caller headers and is the only route to
+the API. Identity is never taken from task input or groups, and is not normalized.
+Task submission ACLs still apply; ownership does not re-evaluate those ACLs on reads.
+
+Missing identity returns 401. Another owner, a missing execution, an ownerless
+legacy record, or an invalid stored payload returns the same 404. Redis lookup
+failures return 503. Status lookup includes the default queue, configured worker
+queues and queues referenced by tasks; keep historical queues in `AQSH_WORKER_QUEUES`
+on API processes if they are no longer referenced by tasks.
+
+Logs are authorized before any SSE headers or entries are sent, including reconnects
+with `Last-Event-ID`. Ownership is checked when opening the stream; it is not
+continuously rechecked. Once the execution record expires or is deleted, retained
+logs are inaccessible in owner-only mode, even if their own TTL has not expired.

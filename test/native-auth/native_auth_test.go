@@ -70,6 +70,9 @@ func TestNativeAuthenticationE2E(t *testing.T) {
 			t.Fatalf("%s %s: %v", method, url, err)
 		}
 		defer resp.Body.Close()
+		if want >= 400 && strings.Contains(resp.Header.Get("Content-Type"), "event-stream") {
+			t.Fatal("denied response started an SSE stream")
+		}
 		data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		if err != nil {
 			t.Fatal(err)
@@ -98,6 +101,7 @@ func TestNativeAuthenticationE2E(t *testing.T) {
 		request(t, kube, "POST", "https://kubernetes.default.svc/apis/authentication.k8s.io/v1/tokenreviews", apiToken, string(body), nil, 403)
 	})
 	for _, path := range []string{"/health", "/metrics"} {
+		// Public probes remain available with execution ownership enabled.
 		t.Run("public "+path, func(t *testing.T) { call(t, "GET", path, "", nil, 200) })
 	}
 	for _, route := range []struct{ method, path string }{
@@ -125,6 +129,13 @@ func TestNativeAuthenticationE2E(t *testing.T) {
 	t.Run("group format controls ACL", func(t *testing.T) { call(t, "POST", "/tasks/"+rejectedGroup, caller, nil, 403) })
 	t.Run("other cluster group cannot authorize", func(t *testing.T) { call(t, "POST", "/tasks/other-cluster-group", caller, nil, 403) })
 	t.Run("API Redis worker result and logs", func(t *testing.T) {
+		// Mint only the second unprivileged test identity, with the aqsh audience.
+		issued := request(t, kube, "POST", "https://kubernetes.default.svc/api/v1/namespaces/aqsh/serviceaccounts/aqsh-e2e-other/token", apiToken,
+			`{"apiVersion":"authentication.k8s.io/v1","kind":"TokenRequest","spec":{"audiences":["aqsh-e2e"],"expirationSeconds":600}}`, nil, 201)
+		var other struct{ Status struct{ Token string } }
+		if err := json.Unmarshal(issued, &other); err != nil || other.Status.Token == "" {
+			t.Fatal("missing second caller token")
+		}
 		submitted := call(t, "POST", "/tasks/"+accepted, caller, map[string]string{
 			"X-Forwarded-User": "forged-user", "X-Forwarded-Groups": "ops-team",
 			"X-Forwarded-Cluster": "forged-cluster", "X-Forwarded-Extra-Cluster-Name": "forged-cluster",
@@ -192,7 +203,7 @@ func TestNativeAuthenticationE2E(t *testing.T) {
 			t.Fatal("missing worker identity or EOF in logs")
 		}
 		for _, data := range [][]byte{info.Payload, execution, logs} {
-			for _, secret := range []string{caller, wrongAudience, apiToken, "forged-user", "forged-cluster", "ops-team"} {
+			for _, secret := range []string{caller, wrongAudience, apiToken, other.Status.Token, "forged-user", "forged-cluster", "ops-team"} {
 				if bytes.Contains(data, []byte(secret)) {
 					t.Fatal("credential or forged identity leaked into queue/result/logs")
 				}
@@ -200,5 +211,24 @@ func TestNativeAuthenticationE2E(t *testing.T) {
 		}
 		call(t, "GET", "/executions/"+task.ID, "", nil, 401)
 		call(t, "GET", "/executions/"+task.ID+"/logs", "not-a-valid-token", nil, 401)
+		t.Run("another authenticated group member cannot read execution", func(t *testing.T) {
+			call(t, "GET", "/tasks", other.Status.Token, nil, 200)
+			call(t, "POST", "/tasks/"+acceptedGroup, other.Status.Token, nil, 202)
+			missing := call(t, "GET", "/executions/missing", other.Status.Token, nil, 404)
+			for _, suffix := range []string{"", "/logs?follow=false", "/logs"} {
+				denied := call(t, "GET", "/executions/"+task.ID+suffix, other.Status.Token,
+					map[string]string{"X-Forwarded-User": identity, "X-Forwarded-Groups": group, "Last-Event-ID": "0"}, 404)
+				if !bytes.Equal(denied, missing) {
+					t.Fatal("ownership denial differs from an unknown execution")
+				}
+			}
+		})
+		t.Run("deleted execution cannot expose retained logs", func(t *testing.T) {
+			if err := inspector.DeleteTask(task.Queue, task.ID); err != nil {
+				t.Fatal(err)
+			}
+			call(t, "GET", "/executions/"+task.ID, caller, nil, 404)
+			call(t, "GET", "/executions/"+task.ID+"/logs?follow=false", caller, nil, 404)
+		})
 	})
 }
