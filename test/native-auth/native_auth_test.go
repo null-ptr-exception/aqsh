@@ -54,7 +54,7 @@ func TestNativeAuthenticationE2E(t *testing.T) {
 	}
 	request := func(t *testing.T, c *http.Client, method, url, token, body string, headers map[string]string, want int) []byte {
 		t.Helper()
-		req, err := http.NewRequest(method, url, strings.NewReader(body))
+		req, err := http.NewRequestWithContext(t.Context(), method, url, strings.NewReader(body))
 		if err != nil {
 			t.Fatal(err)
 		}

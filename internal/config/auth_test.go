@@ -2,10 +2,75 @@ package config
 
 import (
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
+
+// Service discovery must not select an auth mode or hide misspelled auth settings.
+func TestAuthenticationServiceLinks(t *testing.T) {
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(key, "AQSH_AUTH_") {
+			t.Setenv(key, "")
+			os.Unsetenv(key)
+		}
+	}
+	t.Setenv("AQSH_MODE", "api")
+	for _, mode := range []string{"trusted-header", "kubernetes"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Setenv("AQSH_AUTH_MODE", mode)
+			if mode == "kubernetes" {
+				t.Setenv("AQSH_AUTH_URL", "https://kubernetes.default.svc")
+				t.Setenv("AQSH_AUTH_TOKEN_FILE", "/mounted/token")
+				t.Setenv("AQSH_AUTH_AUDIENCES", "aqsh")
+			}
+			want := Load()
+			for _, prefix := range []string{"AQSH_AUTH", "AQSH_AUTH_PROXY"} {
+				for suffix, value := range map[string]string{
+					"SERVICE_HOST":              "10.0.0.10",
+					"SERVICE_PORT":              "8443",
+					"SERVICE_PORT_HTTPS":        "8443",
+					"SERVICE_PORT_METRICS_HTTP": "9090",
+					"PORT":                      "tcp://10.0.0.10:8443",
+				} {
+					t.Setenv(prefix+"_"+suffix, value)
+				}
+				for _, protocol := range []string{"TCP", "UDP", "SCTP"} {
+					portPrefix := prefix + "_PORT_8443_" + protocol
+					t.Setenv(portPrefix, strings.ToLower(protocol)+"://10.0.0.10:8443")
+					t.Setenv(portPrefix+"_PROTO", strings.ToLower(protocol))
+					t.Setenv(portPrefix+"_PORT", "8443")
+					t.Setenv(portPrefix+"_ADDR", "10.0.0.10")
+				}
+			}
+			got := Load()
+			if err := got.Validate(); err != nil {
+				t.Fatalf("service links prevent startup: %v", err)
+			}
+			if got.AuthMode != want.AuthMode || !reflect.DeepEqual(got.Auth, want.Auth) {
+				t.Fatal("service links changed authentication settings")
+			}
+			for _, key := range []string{
+				"AQSH_AUTH_INCLUDE_CLUSTER_IN_IDENTIY",
+				"AQSH_AUTH_PORT_TIMEOUT",
+				"AQSH_AUTH_PORT_8443_TCP_TIMEOUT",
+				"AQSH_AUTH_PORT_8443_HTTP",
+				"AQSH_AUTH_SERVICE_PORTAL",
+				"AQSH_AUTH_SERVICE_PORT_",
+				"AQSH_AUTH_SERVICE_HOST_EXTRA",
+			} {
+				t.Run(key, func(t *testing.T) {
+					t.Setenv(key, "typo")
+					if err := Load().Validate(); err == nil || !strings.Contains(err.Error(), key) {
+						t.Fatalf("expected error naming %s, got %v", key, err)
+					}
+				})
+			}
+		})
+	}
+}
 
 func TestAuthenticationEnvironment(t *testing.T) {
 	// Keep the tests independent of local auth settings, including unknown names.

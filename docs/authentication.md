@@ -16,6 +16,10 @@ API restart. Unknown `AQSH_AUTH_*` settings, invalid booleans/durations and inva
 combinations fail startup. Native settings require `AQSH_AUTH_MODE=kubernetes`.
 There is no separate authentication YAML file.
 
+Kubernetes Service discovery variables, such as `AQSH_AUTH_SERVICE_HOST` and
+`AQSH_AUTH_PROXY_PORT_8080_TCP`, are ignored in both modes. Other unknown
+`AQSH_AUTH_*` names still fail startup.
+
 | Variable | Meaning | Default |
 |---|---|---|
 | `AQSH_AUTH_MODE` | `trusted-header` or `kubernetes` | `trusted-header` |

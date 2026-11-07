@@ -84,11 +84,16 @@ supported for the baseline suite, not in combination with additional test profil
 
 ## Native TokenReview E2E
 
-Both native modes use the same runner and the cluster's real TokenReview API:
+Both native modes use the same runner and the cluster's real TokenReview API.
+This example creates its own disposable cluster, independently of the baseline
+example above:
 
 ```bash
+kind create cluster --name aqsh-e2e --wait 120s \
+  --image kindest/node:v1.33.7@sha256:d26ef333bdb2cbe9862a0f7c3803ecc7b4303d8cea8e814b481b09949d353040
 make test-e2e KUBE_CONTEXT=kind-aqsh-e2e E2E_ARGS="--profile native-auth"
 make test-e2e KUBE_CONTEXT=kind-aqsh-e2e E2E_ARGS="--profile native-auth,qualified-identity"
+kind delete cluster --name aqsh-e2e
 ```
 
 The profiles use separate reviewer/caller ServiceAccounts, projected tokens with

@@ -3,12 +3,17 @@ package config
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/rophy/aqsh/internal/auth"
 )
+
+// Match Kubernetes Service discovery variables without ignoring arbitrary PORT
+// settings or misspelled authentication options that share the AQSH_AUTH_ prefix.
+var authServiceLinkEnv = regexp.MustCompile(`^AQSH_AUTH(_[A-Z0-9_]+)?_(SERVICE_HOST|SERVICE_PORT(_[A-Z0-9_]+)?|PORT(_[0-9]+_(TCP|UDP|SCTP)(_(PROTO|PORT|ADDR))?)?)$`)
 
 // Authentication settings fail on invalid input instead of silently changing policy.
 func loadAuthEnv(mode string) (auth.Config, error) {
@@ -27,7 +32,7 @@ func loadAuthEnv(mode string) (auth.Config, error) {
 	}
 	for _, entry := range os.Environ() {
 		key, value, _ := strings.Cut(entry, "=")
-		if !strings.HasPrefix(key, "AQSH_AUTH_") || key == "AQSH_AUTH_MODE" {
+		if !strings.HasPrefix(key, "AQSH_AUTH_") || key == "AQSH_AUTH_MODE" || authServiceLinkEnv.MatchString(key) {
 			continue
 		}
 		if mode != "kubernetes" {

@@ -53,7 +53,7 @@ func TestNativeIdentityReachesTaskAuthorizationAndQueue(t *testing.T) {
 	}{
 		{"forged groups rejected", nil, 403},
 		{"verified group cannot add CSV membership", []string{"other,verified-group"}, 403},
-		{"verified group matches exactly", []string{" verified-group "}, 403},
+		{"padded verified group is not an exact match", []string{" verified-group "}, 403},
 		{"verified groups accepted", []string{"verified-group"}, 202},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
