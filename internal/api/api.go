@@ -143,6 +143,10 @@ func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 		s.jsonError(w, http.StatusUnauthorized, "identity header required")
 		return
 	}
+	if !s.allows(r, taskName, "run") {
+		s.jsonError(w, http.StatusForbidden, "not authorized for this task")
+		return
+	}
 
 	taskDef, err := s.tasks.Resolve(taskName)
 	if err != nil {
@@ -248,6 +252,10 @@ func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetTaskDef(w http.ResponseWriter, r *http.Request) {
 	taskName := r.PathValue("name")
+	if !s.allows(r, taskName, "read") && !s.allows(r, taskName, "run") {
+		s.jsonError(w, http.StatusNotFound, "task not found")
+		return
+	}
 
 	taskDef, err := s.tasks.Resolve(taskName)
 	if err != nil {
@@ -292,27 +300,8 @@ func (s *Server) handleGetTaskDef(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetExecution(w http.ResponseWriter, r *http.Request) {
 	taskID := r.PathValue("id")
-
-	// Try all queues the worker is configured to process
-	allQueues := append([]string{"default"}, s.cfg.WorkerQueues...)
-	seen := make(map[string]bool)
-
-	var info *asynq.TaskInfo
-	var err error
-
-	for _, q := range allQueues {
-		if seen[q] {
-			continue
-		}
-		seen[q] = true
-		info, err = s.inspector.GetTaskInfo(q, taskID)
-		if err == nil {
-			break
-		}
-	}
-
-	if err != nil {
-		s.jsonError(w, http.StatusNotFound, "task not found")
+	info := s.executionInfo(w, r)
+	if info == nil {
 		return
 	}
 
@@ -365,6 +354,9 @@ func (s *Server) handleGetExecution(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
+	if s.tasks.RBACEnabled() && s.executionInfo(w, r) == nil {
+		return
+	}
 	taskID := r.PathValue("id")
 	follow := r.URL.Query().Get("follow") != "false"
 
@@ -423,6 +415,9 @@ func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 	result := make(map[string]any)
 	for name := range s.tasks.Tasks {
+		if !s.allows(r, name, "read") && !s.allows(r, name, "run") {
+			continue
+		}
 		taskDef, _ := s.tasks.Resolve(name)
 		result[name] = map[string]any{
 			"description": taskDef.Description,
@@ -639,6 +634,9 @@ func (s *Server) handler(authenticator auth.Authenticator) http.Handler {
 	}
 
 	var handler http.Handler = mux
+	if s.tasks.RBACEnabled() {
+		handler = s.requireRBACIdentity(handler)
+	}
 	if authenticator != nil {
 		handler = auth.Middleware(authenticator, s.cfg.IdentityHeader, s.cfg.GroupsHeader, handler)
 	}

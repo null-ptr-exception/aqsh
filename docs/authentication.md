@@ -162,6 +162,8 @@ To roll back, restore the authenticating proxy route and explicitly select
 to that proxy. Existing tasks retain their identity format unless qualification
 is explicitly enabled.
 
-Execution reads retain the existing policy: authenticated callers who know an
-execution ID can read its status, result and logs. Cluster-qualified task ACLs do
-not provide execution ownership isolation. Owner checks are a separate follow-up.
+Without RBAC, execution reads retain the existing policy: authenticated callers
+who know an execution ID can read its status, result and logs. Optional
+[role-based authorization](authorization.md) adds owner reads via current `run`
+and shared reads via `read`. Cluster qualification affects both binding matches
+and exact ownership; it does not provide target-level isolation within a task.

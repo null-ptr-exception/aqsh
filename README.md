@@ -447,7 +447,8 @@ Set `AQSH_REQUIRE_IDENTITY=true` to reject requests without this header (401).
 
 ### User and Group Authorization
 
-Tasks can restrict access using `allowed_users` and/or `allowed_groups` in the task config:
+Legacy tasks can restrict submission using `allowed_users` and/or
+`allowed_groups` in the task config:
 
 ```yaml
 tasks:
@@ -464,6 +465,51 @@ tasks:
 - Returns 403 if neither matches.
 
 Tasks without `allowed_users` or `allowed_groups` are open to all users (or all authenticated users when `AQSH_REQUIRE_IDENTITY=true`).
+
+### Role-Based Authorization
+
+Add top-level `roles` and `bindings` to `tasks.yaml` to enable RBAC. Bindings
+map exact authenticated users (including ServiceAccounts) and groups to roles;
+matching either grants the role. Grants are additive, with no deny rules or role
+inheritance. Included files remain task-only.
+
+```yaml
+roles:
+  deployer:
+    - tasks: [deploy]
+      verbs: [run]
+  operator:
+    - tasks: [deploy]
+      verbs: [read, run]
+bindings:
+  deployer:
+    users: [system:serviceaccount:ci:deployer]
+  operator:
+    groups: [system:serviceaccounts:ops]
+```
+
+| Grant | Submit | View definition | Read own executions | Read others' executions |
+|---|---|---|---|---|
+| `run` | Yes | Yes | Yes | No |
+| `read` | No | Yes | Yes | Yes |
+
+All permissions apply to the rule's exact task names; `tasks: ["*"]` includes all
+current and future tasks. Other glob patterns and wildcard verbs are unsupported.
+Caller identity is required in RBAC mode. The task catalog is filtered to grants,
+and direct requests for unauthorized definitions or executions return 404.
+Status, results and logs share the same check; log streams are checked before
+opening, including reconnects. Reads use the original queued task name/submitter
+and current grants, even if the task definition has since been removed.
+
+With neither policy section present, legacy behavior is unchanged, including
+execution reads. Explicit `roles: {}` or `bindings: {}` enables RBAC without
+grants; null policy sections are invalid. Nonempty legacy task ACLs cannot be
+mixed with RBAC. Task configuration now rejects unknown YAML fields and multiple
+documents so misspelled policy settings cannot silently fall back to legacy mode.
+
+See [authorization](docs/authorization.md) for migration, revocation and execution
+retention behavior. RBAC is task-level; input `values_url` checks do not authorize
+execution reads or isolate different targets within the same task.
 
 ### Trust Boundary
 

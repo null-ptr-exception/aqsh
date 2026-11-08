@@ -4,22 +4,74 @@ defaults:
 tasks:
   identity:
     script: identity.sh
-    allowed_users: [system:serviceaccount:aqsh:aqsh-e2e-caller]
+    queue: runs
   qualified-identity:
     script: identity.sh
-    allowed_users: [kind-e2e/system:serviceaccount:aqsh:aqsh-e2e-caller]
+    queue: runs
   forbidden-user:
     script: identity.sh
-    allowed_users: [system:serviceaccount:aqsh:someone-else]
   serviceaccount-group:
     script: identity.sh
-    allowed_groups: [system:serviceaccounts:aqsh]
   forbidden-group:
     script: identity.sh
-    allowed_groups: [ops-team]
   qualified-serviceaccount-group:
     script: identity.sh
-    allowed_groups: [kind-e2e/system:serviceaccounts:aqsh]
   other-cluster-group:
     script: identity.sh
-    allowed_groups: [other-cluster/system:serviceaccounts:aqsh]
+  shared-run:
+    script: identity.sh
+
+roles:
+  identity:
+    - tasks: [identity]
+      verbs: [run]
+  qualified-identity:
+    - tasks: [qualified-identity]
+      verbs: [run]
+  forbidden-user:
+    - tasks: [forbidden-user]
+      verbs: [run]
+  serviceaccount-group:
+    - tasks: [serviceaccount-group]
+      verbs: [run]
+  forbidden-group:
+    - tasks: [forbidden-group]
+      verbs: [run]
+  qualified-serviceaccount-group:
+    - tasks: [qualified-serviceaccount-group]
+      verbs: [run]
+  other-cluster-group:
+    - tasks: [other-cluster-group]
+      verbs: [run]
+  shared-run:
+    - tasks: [shared-run]
+      verbs: [run]
+  reader:
+    - tasks: [identity, qualified-identity, shared-run]
+      verbs: [read]
+
+bindings:
+  identity:
+    users: [system:serviceaccount:aqsh:aqsh-e2e-caller]
+  qualified-identity:
+    users: [kind-e2e/system:serviceaccount:aqsh:aqsh-e2e-caller]
+  forbidden-user:
+    users: [system:serviceaccount:aqsh:someone-else]
+  serviceaccount-group:
+    groups: [system:serviceaccounts:aqsh]
+  forbidden-group:
+    groups: [ops-team]
+  qualified-serviceaccount-group:
+    groups: [kind-e2e/system:serviceaccounts:aqsh]
+  other-cluster-group:
+    groups: [other-cluster/system:serviceaccounts:aqsh]
+  shared-run:
+    users:
+      - system:serviceaccount:aqsh:aqsh-e2e-caller
+      - system:serviceaccount:aqsh:aqsh-e2e-other
+      - kind-e2e/system:serviceaccount:aqsh:aqsh-e2e-caller
+      - kind-e2e/system:serviceaccount:aqsh:aqsh-e2e-other
+  reader:
+    users:
+      - system:serviceaccount:aqsh:aqsh-e2e-reader
+      - kind-e2e/system:serviceaccount:aqsh:aqsh-e2e-reader
