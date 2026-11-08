@@ -3,13 +3,15 @@
 Authentication modes are described in [authentication.md](authentication.md).
 Native Kubernetes mode requires a bearer token on every route except exact
 `GET /health` and `GET /metrics`; forwarded identity headers are ignored.
-Authentication does not change the existing execution read policy.
+Optional [role-based authorization](authorization.md) restricts task discovery,
+submission and execution reads. Without a policy, legacy behavior is retained.
 
 ## Task Definitions
 
 ### GET /tasks - List All Task Definitions
 
 Returns task names and descriptions. Use `GET /tasks/{name}` for full details.
+With RBAC enabled, requires identity and lists only tasks with `run` or `read`.
 
 **Response (200 OK):**
 ```json
@@ -28,6 +30,8 @@ Returns task names and descriptions. Use `GET /tasks/{name}` for full details.
 ### GET /tasks/{name} - Get Task Definition
 
 Returns full task definition including inputs. When identity headers are provided, inputs with `values_url` resolve the remote URL and include the allowed values for that user.
+With RBAC enabled, `run` or `read` is required before remote values are fetched;
+unauthorized definitions return 404.
 
 **Response without identity (200 OK):**
 ```json
@@ -75,7 +79,8 @@ Returns full task definition including inputs. When identity headers are provide
 
 | Status | Reason |
 |--------|--------|
-| 404 | Unknown task |
+| 401 | Missing identity in RBAC mode, or failed native authentication |
+| 404 | Unknown task or definition hidden by RBAC |
 
 ### POST /tasks/{name} - Submit Task Execution
 
@@ -98,6 +103,10 @@ The identity header (default `X-Forwarded-User`, configurable via `AQSH_IDENTITY
 **Authorization:**
 
 Tasks can restrict access using `allowed_users` and/or `allowed_groups` in their config. If either matches, the request is authorized (OR logic). In trusted-header mode, `allowed_users` matches the configured identity header and `allowed_groups` matches the groups header (comma-separated). In native mode, both use the verified TokenReview identity and groups; optional cluster qualification prefixes both the user identity and every group as described in [authentication](authentication.md#identity-and-task-authorization). If neither is configured, the task is open to all.
+
+When top-level `roles` or `bindings` is configured, RBAC replaces these legacy
+ACLs: nonblank identity and `run` for the task are required. Nonempty legacy ACLs
+cannot be mixed with RBAC. A `read` grant alone does not allow submission.
 
 Inputs with `values_url` perform additional per-parameter authorization: the remote URL is fetched with user context, and the submitted value must be in the returned list.
 
@@ -125,6 +134,11 @@ Inputs with `values_url` perform additional per-parameter authorization: the rem
 ## Executions
 
 ### GET /executions/{id} - Get Execution Status
+
+With RBAC enabled, requires `read` for the original queued task name, or its exact
+submitter identity with current `run` for that name. The current task definition
+need not exist. Inaccessible/missing records return the same 404; lookup backend
+failures return 503. Without RBAC, existing execution visibility is retained.
 
 **Response (200 OK):**
 ```json
@@ -157,6 +171,11 @@ Inputs with `values_url` perform additional per-parameter authorization: the rem
 | `retrying` | Failed, scheduled for retry |
 
 ### GET /executions/{id}/logs - Stream Execution Logs
+
+With RBAC enabled, applies the execution-status permission check before opening
+SSE, including requests with `Last-Event-ID` or `follow=false`. Deleted/expired
+execution records make retained logs inaccessible. An already-open stream is not
+interrupted by policy changes; each reconnect is authorized separately.
 
 **Response (200 OK, SSE):**
 ```http

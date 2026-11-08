@@ -8,14 +8,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"gopkg.in/yaml.v3"
 )
 
 type TasksConfig struct {
 	Include  []string           `yaml:"include"`
 	Defaults TaskDefaults       `yaml:"defaults"`
 	Tasks    map[string]TaskDef `yaml:"tasks"`
+	Roles    map[string][]Rule  `yaml:"roles"`
+	Bindings map[string]Binding `yaml:"bindings"`
 }
 
 type TaskDefaults struct {
@@ -177,8 +177,8 @@ func Load(path string) (*TasksConfig, error) {
 		return nil, fmt.Errorf("reading tasks config: %w", err)
 	}
 
-	var cfg TasksConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	cfg, err := decodeConfig(data)
+	if err != nil {
 		return nil, fmt.Errorf("parsing tasks config: %w", err)
 	}
 
@@ -223,13 +223,16 @@ func Load(path string) (*TasksConfig, error) {
 				continue
 			}
 			loaded[absMatch] = true
-			if err := loadInclude(&cfg, absMatch, taskSources); err != nil {
+			if err := loadInclude(cfg, absMatch, taskSources); err != nil {
 				return nil, err
 			}
 		}
 	}
 
-	return &cfg, nil
+	if err := cfg.validateRBAC(); err != nil {
+		return nil, err
+	}
+	return cfg, nil
 }
 
 func loadInclude(cfg *TasksConfig, path string, taskSources map[string]string) error {
@@ -238,12 +241,8 @@ func loadInclude(cfg *TasksConfig, path string, taskSources map[string]string) e
 		return fmt.Errorf("reading included file %q: %w", path, err)
 	}
 
-	var included struct {
-		Include  []string           `yaml:"include"`
-		Defaults TaskDefaults       `yaml:"defaults"`
-		Tasks    map[string]TaskDef `yaml:"tasks"`
-	}
-	if err := yaml.Unmarshal(data, &included); err != nil {
+	included, err := decodeConfig(data)
+	if err != nil {
 		return fmt.Errorf("parsing included file %q: %w", path, err)
 	}
 	if len(included.Include) > 0 {
@@ -251,6 +250,9 @@ func loadInclude(cfg *TasksConfig, path string, taskSources map[string]string) e
 	}
 	if included.Defaults != (TaskDefaults{}) {
 		return fmt.Errorf("included file %q must not define defaults", path)
+	}
+	if included.RBACEnabled() {
+		return fmt.Errorf("included file %q must not define roles or bindings", path)
 	}
 
 	if err := validateInputs(included.Tasks); err != nil {

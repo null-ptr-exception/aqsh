@@ -26,6 +26,8 @@ spec:
           value: worker
         - name: AQSH_REDIS_ADDR
           value: redis:6379
+        - name: AQSH_WORKER_QUEUES
+          value: default,runs
         volumeMounts:
         - name: tasks-config
           mountPath: /etc/aqsh
