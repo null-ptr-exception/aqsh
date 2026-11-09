@@ -123,7 +123,7 @@ Inputs with `values_url` perform additional per-parameter authorization: the rem
 
 | Status | Reason |
 |--------|--------|
-| 401 | Missing identity header (when `AQSH_REQUIRE_IDENTITY=true`) |
+| 401 | Missing identity header when `AQSH_REQUIRE_IDENTITY=true`, missing or blank identity when RBAC is enabled (even if `AQSH_REQUIRE_IDENTITY=false`), or failed native authentication |
 | 403 | Not authorized for this task (user/group check failed), or submitted value not in allowed values from `values_url` |
 | 400 | Validation error (missing field, invalid pattern, etc.) |
 | 404 | Unknown task |
@@ -139,6 +139,19 @@ With RBAC enabled, requires `read` for the original queued task name, or its exa
 submitter identity with current `run` for that name. The current task definition
 need not exist. Inaccessible/missing records return the same 404; lookup backend
 failures return 503. Without RBAC, existing execution visibility is retained.
+
+**Query Parameters:**
+
+| Param | Description | Default |
+|-------|-------------|---------|
+| `queue` | Execution queue returned by submission; searches only this queue and still checks execution permissions | Search configured queues |
+
+Retain and pass the submission's queue when polling, for example
+`GET /executions/{id}?queue=deployments`. This avoids scanning unrelated queues
+and can locate retained executions after the queue is removed from configuration.
+A wrong queue returns 404 without falling back. Omitting `queue` (or passing an
+empty value) preserves the configured-queue search, whose cost grows with the
+number of distinct queues. The queue is a locator, not an authorization grant.
 
 **Response (200 OK):**
 ```json
@@ -203,6 +216,7 @@ data: Deployment complete.
 | Param | Description | Default |
 |-------|-------------|---------|
 | `follow` | Keep connection open for running executions | `true` |
+| `queue` | Execution queue for RBAC authorization lookup, with the same semantics as execution status; ignored for legacy log reads | Search configured queues in RBAC mode |
 
 ## System
 

@@ -171,6 +171,7 @@ type ResolvedTask struct {
 	Input         []Input
 }
 
+// Load combines root policy with included tasks and validates the complete config.
 func Load(path string) (*TasksConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -235,6 +236,7 @@ func Load(path string) (*TasksConfig, error) {
 	return cfg, nil
 }
 
+// loadInclude adds task definitions without allowing includes to replace policy.
 func loadInclude(cfg *TasksConfig, path string, taskSources map[string]string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -290,6 +292,7 @@ func validateInputs(tasks map[string]TaskDef) error {
 	return nil
 }
 
+// Resolve applies task defaults and parses durations needed for execution.
 func (c *TasksConfig) Resolve(name string) (*ResolvedTask, error) {
 	task, ok := c.Tasks[name]
 	if !ok {
@@ -325,14 +328,6 @@ func (c *TasksConfig) Resolve(name string) (*ResolvedTask, error) {
 		maxRetry = *task.MaxRetry
 	}
 
-	queue := c.Defaults.Queue
-	if task.Queue != "" {
-		queue = task.Queue
-	}
-	if queue == "" {
-		queue = "default"
-	}
-
 	return &ResolvedTask{
 		Name:          name,
 		Script:        task.Script,
@@ -340,11 +335,23 @@ func (c *TasksConfig) Resolve(name string) (*ResolvedTask, error) {
 		Timeout:       timeoutDur,
 		MaxRetry:      maxRetry,
 		RetryDelay:    retryDelayDur,
-		Queue:         queue,
+		Queue:         c.Queue(name),
 		AllowedUsers:  task.AllowedUsers,
 		AllowedGroups: task.AllowedGroups,
 		Input:         task.Input,
 	}, nil
+}
+
+// Queue returns the configured queue without resolving execution settings.
+// Historical lookups must not depend on valid timeout or retry durations.
+func (c *TasksConfig) Queue(name string) string {
+	if queue := c.Tasks[name].Queue; queue != "" {
+		return queue
+	}
+	if c.Defaults.Queue != "" {
+		return c.Defaults.Queue
+	}
+	return "default"
 }
 
 func (c *TasksConfig) ValidatePayload(taskName string, payload map[string]any) (map[string]string, error) {
