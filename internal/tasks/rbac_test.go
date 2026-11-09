@@ -73,6 +73,9 @@ func TestLoadRBAC(t *testing.T) {
 func TestRBACIncludes(t *testing.T) {
 	for _, tc := range []struct{ name, included, wantError string }{
 		{"tasks only", "tasks: {deploy: {script: deploy.sh}}\n", ""},
+		{"empty file", "", ""},
+		{"whitespace", " \n  \n", ""},
+		{"comments only", "# no tasks yet\n", ""},
 		{"mixed ACL", "tasks: {deploy: {script: deploy.sh, allowed_groups: [ops]}}\n", "cannot be combined"},
 		{"included roles", "roles: {}\n", "must not define roles or bindings"},
 		{"included bindings", "bindings: {}\n", "must not define roles or bindings"},
@@ -100,6 +103,22 @@ func TestRBACIncludes(t *testing.T) {
 				t.Fatalf("root policy did not apply to included task: %v", err)
 			}
 		})
+	}
+}
+
+func TestLoadEmptyConfig(t *testing.T) {
+	for _, body := range []string{"", " \n\n", "# no tasks yet\n"} {
+		file := filepath.Join(t.TempDir(), "tasks.yaml")
+		if err := os.WriteFile(file, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := Load(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.RBACEnabled() || len(cfg.Tasks) != 0 {
+			t.Fatalf("empty file changed legacy configuration: %+v", cfg)
+		}
 	}
 }
 

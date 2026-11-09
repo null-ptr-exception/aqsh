@@ -87,15 +87,37 @@ Task deletion or renaming does not rewrite an execution's original task name.
 Retained executions continue to use that name for authorization, without resolving
 the current task definition or calling its `values_url`.
 
-Execution lookup searches `default`, `AQSH_WORKER_QUEUES` and queues resolved from
-current tasks. Keep retired queue names in the API's `AQSH_WORKER_QUEUES` while
-their executions remain available. Once an execution record expires or is deleted,
-its logs are inaccessible in RBAC mode even if the log stream still exists.
+Pass the `queue` returned by submission as `?queue=<name>` on status and RBAC log
+requests to look up only that queue, including retired queues. A wrong queue
+returns 404 without searching others. Queue selection does not grant access:
+the stored task name and caller's current permissions still authorize the record.
+
+Without a nonempty `queue` parameter, lookup retains the compatibility search
+through `default`, `AQSH_WORKER_QUEUES`, the default task queue and current task
+queues. Queue discovery does not resolve timeouts or retry settings. Keep retired
+queue names in the API's `AQSH_WORKER_QUEUES` while ID-only callers still need them.
+This path can search every distinct configured queue; clients with many queues
+should retain and pass the submission's queue to avoid that cost. Once an
+execution record expires or is deleted, its logs are inaccessible in RBAC mode
+even if the log stream still exists. Legacy log reads remain independent of
+execution records and ignore `queue`.
 
 ## Migration
 
 With neither policy section present, legacy submission ACLs and execution reads
 remain unchanged. This is upgrade compatibility, not automatic ownership isolation.
+
+Upgrade in this order:
+
+1. Deploy the new binary to **all API and worker replicas**, keeping the existing
+   `allowed_users`/`allowed_groups` configuration unchanged.
+2. After confirming every replica runs the new binary, replace legacy ACLs with
+   `roles`/`bindings`, then restart all replicas with the consistent new policy.
+   RBAC enforcement is complete only after every API replica loads that policy.
+
+Older binaries ignore `roles`/`bindings`. Deploying the RBAC configuration first
+removes the legacy ACLs while those binaries still serve requests, opening tasks
+to everyone. Do not run an older binary against an RBAC configuration.
 
 For example, replace this legacy task ACL:
 
@@ -113,8 +135,10 @@ access is intended. Tasks previously open to everyone also require explicit gran
 in RBAC mode. Nonempty `allowed_users`/`allowed_groups` anywhere in the loaded task
 set are rejected when RBAC is enabled, including ACLs in included files.
 
-Deploy the policy consistently across all API replicas. Rolling back to no policy
-also restores the broader legacy execution-read behavior. Explicit `roles: {}` or
+Before downgrading the binary, restore the intended legacy ACLs, remove both
+policy sections and restart all replicas while still running the new binary.
+Only then deploy the older binary. Rolling back to no policy also restores the
+broader legacy execution-read behavior. Explicit `roles: {}` or
 `bindings: {}` is an enabled policy with no grants, not a rollback. Delete the
 sections entirely to select legacy mode; `null` is invalid.
 

@@ -135,6 +135,7 @@ func (s *Server) Run(ctx context.Context) error {
 	return srv.ListenAndServe()
 }
 
+// handleSubmitTask authorizes the caller before validating inputs or enqueueing.
 func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 	taskName := r.PathValue("name")
 
@@ -152,20 +153,6 @@ func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.jsonError(w, http.StatusNotFound, err.Error())
 		return
-	}
-
-	// Authorization: allowed_users OR allowed_groups
-	if len(taskDef.AllowedUsers) > 0 || len(taskDef.AllowedGroups) > 0 {
-		userOK := len(taskDef.AllowedUsers) > 0 && isAllowedUser(identity, taskDef.AllowedUsers)
-		verifiedGroups := splitGroups(groups)
-		if p, ok := auth.FromContext(r.Context()); ok {
-			verifiedGroups = p.Groups
-		}
-		groupOK := len(taskDef.AllowedGroups) > 0 && hasAnyGroup(verifiedGroups, taskDef.AllowedGroups)
-		if !userOK && !groupOK {
-			s.jsonError(w, http.StatusForbidden, "not authorized for this task")
-			return
-		}
 	}
 
 	var payload map[string]any
@@ -250,6 +237,7 @@ func (s *Server) handleSubmitTask(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleGetTaskDef authorizes discovery before resolving caller-specific values.
 func (s *Server) handleGetTaskDef(w http.ResponseWriter, r *http.Request) {
 	taskName := r.PathValue("name")
 	if !s.allows(r, taskName, "read") && !s.allows(r, taskName, "run") {
@@ -298,6 +286,7 @@ func (s *Server) handleGetTaskDef(w http.ResponseWriter, r *http.Request) {
 	s.jsonResponse(w, http.StatusOK, result)
 }
 
+// handleGetExecution returns status and results only after execution authorization.
 func (s *Server) handleGetExecution(w http.ResponseWriter, r *http.Request) {
 	taskID := r.PathValue("id")
 	info := s.executionInfo(w, r)
@@ -353,8 +342,10 @@ func (s *Server) handleGetExecution(w http.ResponseWriter, r *http.Request) {
 	s.jsonResponse(w, http.StatusOK, resp)
 }
 
+// handleGetLogs checks execution access before opening or resuming an SSE stream.
+// Legacy policy preserves log access without an execution record.
 func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
-	if s.tasks.RBACEnabled() && s.executionInfo(w, r) == nil {
+	if !s.allows(r, "", "read") && s.executionInfo(w, r) == nil {
 		return
 	}
 	taskID := r.PathValue("id")
@@ -412,6 +403,7 @@ func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleListTasks exposes only tasks the caller may discover under current policy.
 func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 	result := make(map[string]any)
 	for name := range s.tasks.Tasks {

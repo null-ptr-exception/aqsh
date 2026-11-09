@@ -44,6 +44,7 @@ func (c *TasksConfig) Allows(task, verb, identity string, groups []string) bool 
 	return false
 }
 
+// validateRBAC rejects ambiguous policies and unsupported grants at startup.
 func (c *TasksConfig) validateRBAC() error {
 	if !c.RBACEnabled() {
 		return nil
@@ -86,13 +87,16 @@ func (c *TasksConfig) validateRBAC() error {
 	return nil
 }
 
-// Strict decoding prevents misspelled policy keys or a second document from
+// decodeConfig prevents misspelled policy keys or a second document from
 // silently discarding authorization. Null policy sections are configuration errors.
 func decodeConfig(data []byte) (*TasksConfig, error) {
 	var cfg TasksConfig
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&cfg); err != nil {
+		if err == io.EOF {
+			return &cfg, nil
+		}
 		return nil, err
 	}
 	var extra any
