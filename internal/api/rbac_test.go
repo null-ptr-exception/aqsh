@@ -3,7 +3,6 @@ package api
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -76,7 +75,6 @@ func TestRBACExecutionAccess(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			s, mr := newRBACServer(t, mode)
 			ids := map[string]string{"missing": "missing", "orphan": "orphan"}
-			queues := map[string]string{"missing": "reads", "orphan": "reads"}
 			for _, f := range []struct{ key, task, owner, queue, kind, raw string }{
 				{key: "owned", task: "deploy", owner: "alice"},
 				{key: "qualified", task: "deploy", owner: "a/alice"},
@@ -105,7 +103,6 @@ func TestRBACExecutionAccess(t *testing.T) {
 					t.Fatal(err)
 				}
 				ids[f.key] = info.ID
-				queues[f.key] = info.Queue
 			}
 			for _, id := range ids {
 				if err := s.logStream.Write(t.Context(), id, "private-log"); err != nil {
@@ -145,8 +142,7 @@ func TestRBACExecutionAccess(t *testing.T) {
 				{"orphan logs", "operator", "orphan", nil, 404},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
-					queue := queues[tc.record]
-					for _, suffix := range []string{"", "/logs?follow=false", "/logs", "?queue=" + queue, "/logs?queue=" + queue + "&follow=false", "/logs?queue=" + queue} {
+					for _, suffix := range []string{"", "/logs?follow=false", "/logs"} {
 						w := rbacRequest(s, tc.identity, tc.groups, "GET", "/executions/"+ids[tc.record]+suffix, "")
 						if w.Code != tc.want {
 							t.Fatalf("%s: got %d %s, want %d", suffix, w.Code, w.Body.String(), tc.want)
@@ -299,7 +295,6 @@ func TestRBACEmptyPolicyAndLegacy(t *testing.T) {
 				{"GET", "/tasks/deploy", 404}, {"POST", "/tasks/deploy", 403},
 				{"GET", "/executions/missing", 404}, {"GET", "/executions/missing/logs", 404},
 				{"GET", "/executions/" + existing.ID, 404}, {"GET", "/executions/" + existing.ID + "/logs", 404},
-				{"GET", "/executions/" + existing.ID + "?queue=reads", 404}, {"GET", "/executions/" + existing.ID + "/logs?queue=reads", 404},
 			} {
 				if w := rbacRequest(s, "alice", nil, route.method, route.path, `{}`); w.Code != route.want {
 					t.Fatalf("empty policy fell back: %d %s", w.Code, w.Body.String())
@@ -399,8 +394,9 @@ func TestAllowsLegacyACL(t *testing.T) {
 	}
 }
 
-// A queue parameter locates records without granting access or falling back.
-func TestExecutionQueueSelection(t *testing.T) {
+// Retained status and logs depend on configured queues and current grants,
+// independently of the current task definition or its execution settings.
+func TestExecutionLookupConfiguredQueues(t *testing.T) {
 	for _, mode := range []string{"trusted-header", "kubernetes"} {
 		t.Run(mode, func(t *testing.T) {
 			s, _ := newRBACServer(t, mode)
@@ -411,14 +407,6 @@ func TestExecutionQueueSelection(t *testing.T) {
 			}
 			if err := s.logStream.WriteEOF(t.Context(), submitted.ID); err != nil {
 				t.Fatal(err)
-			}
-			for _, suffix := range []string{"", "/logs"} {
-				for _, queue := range []string{"default", "missing"} {
-					w := rbacRequest(s, "alice", nil, "GET", "/executions/"+submitted.ID+suffix+"?queue="+queue, "")
-					if w.Code != 404 || strings.Contains(w.Header().Get("Content-Type"), "event-stream") {
-						t.Fatalf("wrong queue fell back: %d %s", w.Code, w.Body.String())
-					}
-				}
 			}
 			for _, duration := range []string{"timeout", "retry_delay", "defaults", "inherited queue"} {
 				def := s.tasks.Tasks["deploy"]
@@ -435,7 +423,7 @@ func TestExecutionQueueSelection(t *testing.T) {
 					}
 				}
 				s.tasks.Tasks["deploy"] = def
-				for _, suffix := range []string{"", "/logs", "?queue=reads", "/logs?queue=reads"} {
+				for _, suffix := range []string{"", "/logs?follow=false", "/logs"} {
 					if w := rbacRequest(s, "alice", nil, "GET", "/executions/"+submitted.ID+suffix, ""); w.Code != 200 {
 						t.Fatalf("%s blocked retained execution: %d %s", duration, w.Code, w.Body.String())
 					}
@@ -443,37 +431,28 @@ func TestExecutionQueueSelection(t *testing.T) {
 			}
 			delete(s.tasks.Tasks, "deploy")
 			s.tasks.Defaults.Queue = ""
-			if w := rbacRequest(s, "alice", nil, "GET", "/executions/"+submitted.ID, ""); w.Code != 404 {
-				t.Fatalf("unlisted queue unexpectedly discovered: %d %s", w.Code, w.Body.String())
+			for _, suffix := range []string{"", "/logs"} {
+				if w := rbacRequest(s, "alice", nil, "GET", "/executions/"+submitted.ID+suffix, ""); w.Code != 404 || strings.Contains(w.Header().Get("Content-Type"), "event-stream") {
+					t.Fatalf("unlisted queue unexpectedly discovered: %d %s", w.Code, w.Body.String())
+				}
 			}
-			for _, suffix := range []string{"?queue=reads", "/logs?queue=reads"} {
-				if w := rbacRequest(s, "alice", nil, "GET", "/executions/"+submitted.ID+suffix, ""); w.Code != 200 {
-					t.Fatalf("retired queue inaccessible: %d %s", w.Code, w.Body.String())
+			s.cfg.WorkerQueues = append(s.cfg.WorkerQueues, "reads")
+			for _, tc := range []struct {
+				identity string
+				groups   []string
+				want     int
+			}{
+				{"alice", nil, 200},
+				{"observer", nil, 200},
+				{"bob", []string{"ci"}, 404},
+			} {
+				for _, suffix := range []string{"", "/logs?follow=false", "/logs"} {
+					w := rbacRequest(s, tc.identity, tc.groups, "GET", "/executions/"+submitted.ID+suffix, "")
+					if w.Code != tc.want || tc.want != 200 && strings.Contains(w.Header().Get("Content-Type"), "event-stream") {
+						t.Fatalf("retired queue authorization for %s: %d %s", tc.identity, w.Code, w.Body.String())
+					}
 				}
 			}
 		})
-	}
-}
-
-// Explicit queue lookups must not issue Redis reads for unrelated task queues.
-func TestExecutionQueueLookupCost(t *testing.T) {
-	s, mr := newRBACServer(t, "trusted-header")
-	if err := s.rdb.SAdd(t.Context(), "asynq:queues", "reads").Err(); err != nil {
-		t.Fatal(err)
-	}
-	lookup := func() int {
-		before := mr.CommandCount()
-		if w := rbacRequest(s, "observer", nil, "GET", "/executions/missing?queue=reads", ""); w.Code != 404 {
-			t.Fatalf("missing execution: %d %s", w.Code, w.Body.String())
-		}
-		return mr.CommandCount() - before
-	}
-	lookup() // Warm the connection and Asynq's lookup script.
-	before := lookup()
-	for i := range 1000 {
-		s.tasks.Tasks[fmt.Sprintf("other-%d", i)] = tasks.TaskDef{Queue: fmt.Sprintf("other-queue-%d", i)}
-	}
-	if after := lookup(); before == 0 || after != before {
-		t.Fatalf("queue lookup cost grew: %d commands before, %d after", before, after)
 	}
 }

@@ -87,20 +87,14 @@ Task deletion or renaming does not rewrite an execution's original task name.
 Retained executions continue to use that name for authorization, without resolving
 the current task definition or calling its `values_url`.
 
-Pass the `queue` returned by submission as `?queue=<name>` on status and RBAC log
-requests to look up only that queue, including retired queues. A wrong queue
-returns 404 without searching others. Queue selection does not grant access:
-the stored task name and caller's current permissions still authorize the record.
-
-Without a nonempty `queue` parameter, lookup retains the compatibility search
-through `default`, `AQSH_WORKER_QUEUES`, the default task queue and current task
-queues. Queue discovery does not resolve timeouts or retry settings. Keep retired
-queue names in the API's `AQSH_WORKER_QUEUES` while ID-only callers still need them.
-This path can search every distinct configured queue; clients with many queues
-should retain and pass the submission's queue to avoid that cost. Once an
-execution record expires or is deleted, its logs are inaccessible in RBAC mode
-even if the log stream still exists. Legacy log reads remain independent of
-execution records and ignore `queue`.
+Execution lookup searches `default`, `AQSH_WORKER_QUEUES`, the default task queue
+and current task queues, checking each distinct queue once. Queue discovery does
+not resolve timeouts or retry settings. Keep retired queue names in the API's
+`AQSH_WORKER_QUEUES` while their retained executions still need status or log
+access, even after removing or renaming the task. A retained record is not
+discoverable once its queue is no longer configured. Once an execution record
+expires or is deleted, its logs are inaccessible in RBAC mode even if the log
+stream still exists. Legacy log reads remain independent of execution records.
 
 ## Migration
 

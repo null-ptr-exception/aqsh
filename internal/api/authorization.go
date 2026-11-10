@@ -57,15 +57,11 @@ func (s *Server) requireRBACIdentity(next http.Handler) http.Handler {
 // executionInfo authorizes metadata, results and logs from the original queued
 // task name/identity. It never relies on the task definition still existing.
 func (s *Server) executionInfo(w http.ResponseWriter, r *http.Request) *asynq.TaskInfo {
-	queues := []string{r.URL.Query().Get("queue")}
-	if queues[0] == "" {
-		// Compatibility path for callers that only retained the execution ID.
-		queues = append([]string{"default"}, s.cfg.WorkerQueues...)
-		if s.tasks != nil {
-			queues = append(queues, s.tasks.Queue(""))
-			for name := range s.tasks.Tasks {
-				queues = append(queues, s.tasks.Queue(name))
-			}
+	queues := append([]string{"default"}, s.cfg.WorkerQueues...)
+	if s.tasks != nil {
+		queues = append(queues, s.tasks.Queue(""))
+		for name := range s.tasks.Tasks {
+			queues = append(queues, s.tasks.Queue(name))
 		}
 	}
 	seen := make(map[string]bool)
