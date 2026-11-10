@@ -8,7 +8,6 @@ import (
 	"flag"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -229,22 +228,12 @@ func TestNativeAuthenticationE2E(t *testing.T) {
 		if !bytes.Contains(logs, []byte("identity="+identity)) || !bytes.Contains(logs, []byte("event: eof")) {
 			t.Fatal("missing worker identity or EOF in logs")
 		}
-		queue := url.QueryEscape(task.Queue)
-		if selected := call(t, "GET", "/executions/"+task.ID+"?queue="+queue, caller, nil, 200); !bytes.Equal(selected, execution) {
-			t.Fatal("queue selection changed execution results")
-		}
-		if selected := call(t, "GET", "/executions/"+task.ID+"/logs?queue="+queue, caller, nil, 200); !bytes.Equal(selected, logs) {
-			t.Fatal("queue selection changed stored logs")
-		}
-		for _, suffix := range []string{"", "/logs"} {
-			call(t, "GET", "/executions/"+task.ID+suffix+"?queue=default", caller, nil, 404)
-		}
 		// A separate real principal can read via its read grant, but cannot run.
 		call(t, "GET", "/executions/"+task.ID, reader, nil, 200)
 		call(t, "GET", "/executions/"+task.ID+"/logs", reader, nil, 200)
 		call(t, "POST", "/tasks/"+accepted, reader, nil, 403)
 		missing := call(t, "GET", "/executions/missing", other, nil, 404)
-		for _, suffix := range []string{"", "/logs?follow=false", "/logs", "?queue=" + queue, "/logs?queue=" + queue} {
+		for _, suffix := range []string{"", "/logs?follow=false", "/logs"} {
 			denied := call(t, "GET", "/executions/"+task.ID+suffix, other, map[string]string{"X-Forwarded-User": identity, "X-Forwarded-Groups": group, "Last-Event-ID": "0"}, 404)
 			if !bytes.Equal(denied, missing) {
 				t.Fatal("denial exposed execution existence")
@@ -273,13 +262,13 @@ func TestNativeAuthenticationE2E(t *testing.T) {
 			if err := json.Unmarshal(info.Payload, &payload); err != nil || !slices.Contains(strings.Split(payload.Groups, ","), group) {
 				t.Fatal("runner lost shared verified group")
 			}
-			for _, suffix := range []string{"", "/logs", "?queue=" + url.QueryEscape(job.Queue), "/logs?queue=" + url.QueryEscape(job.Queue)} {
+			for _, suffix := range []string{"", "/logs"} {
 				call(t, "GET", "/executions/"+job.ID+suffix, token, nil, 200)
 				call(t, "GET", "/executions/"+job.ID+suffix, reader, nil, 200)
 			}
 		}
 		for i, token := range []string{other, caller} {
-			for _, suffix := range []string{"", "/logs?follow=false", "/logs", "?queue=" + url.QueryEscape(jobs[i].Queue), "/logs?queue=" + url.QueryEscape(jobs[i].Queue)} {
+			for _, suffix := range []string{"", "/logs?follow=false", "/logs"} {
 				call(t, "GET", "/executions/"+jobs[i].ID+suffix, token, map[string]string{"X-Forwarded-User": identity, "X-Forwarded-Groups": group, "Last-Event-ID": "0"}, 404)
 			}
 		}
@@ -287,7 +276,7 @@ func TestNativeAuthenticationE2E(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, token := range []string{caller, reader} {
-			for _, suffix := range []string{"", "/logs", "?queue=" + url.QueryEscape(jobs[0].Queue), "/logs?queue=" + url.QueryEscape(jobs[0].Queue)} {
+			for _, suffix := range []string{"", "/logs"} {
 				call(t, "GET", "/executions/"+jobs[0].ID+suffix, token, nil, 404)
 			}
 		}

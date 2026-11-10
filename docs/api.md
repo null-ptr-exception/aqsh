@@ -140,18 +140,9 @@ submitter identity with current `run` for that name. The current task definition
 need not exist. Inaccessible/missing records return the same 404; lookup backend
 failures return 503. Without RBAC, existing execution visibility is retained.
 
-**Query Parameters:**
-
-| Param | Description | Default |
-|-------|-------------|---------|
-| `queue` | Execution queue returned by submission; searches only this queue and still checks execution permissions | Search configured queues |
-
-Retain and pass the submission's queue when polling, for example
-`GET /executions/{id}?queue=deployments`. This avoids scanning unrelated queues
-and can locate retained executions after the queue is removed from configuration.
-A wrong queue returns 404 without falling back. Omitting `queue` (or passing an
-empty value) preserves the configured-queue search, whose cost grows with the
-number of distinct queues. The queue is a locator, not an authorization grant.
+Execution lookup searches the configured queues. Keep retired queue names in the
+API's `AQSH_WORKER_QUEUES` while their retained executions still need to be read;
+the task definition itself need not remain. See [lifecycle and retention](authorization.md#lifecycle-and-retention).
 
 **Response (200 OK):**
 ```json
@@ -216,7 +207,6 @@ data: Deployment complete.
 | Param | Description | Default |
 |-------|-------------|---------|
 | `follow` | Keep connection open for running executions | `true` |
-| `queue` | Execution queue for RBAC authorization lookup, with the same semantics as execution status; ignored for legacy log reads | Search configured queues in RBAC mode |
 
 ## System
 
