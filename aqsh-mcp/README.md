@@ -10,7 +10,8 @@ This directory is an independent Go module. Run the commands below from
 ## Requirements
 
 - Go 1.25+ (the toolchain is pinned for reproducible builds).
-- aqsh with owner-only execution reads and structured JSON execution results.
+- aqsh with task RBAC enabled, `rbac_enabled` in `/health`, and the original task
+  name in execution metadata. Structured REST JSON results (#14) are not required.
 - An OAuth authorization server with discovery, a JWKS endpoint, and signed JWT
   **access tokens** for the exact public MCP URL as audience. First version
   supports RS256, ES256, PS256 and EdDSA; opaque-token introspection is deferred.
@@ -23,9 +24,10 @@ No production authorization server or password store is implemented here.
 
 ## Run
 
-1. Start aqsh with the two API changes, `AQSH_BIND=127.0.0.1:8080`, and
-   `AQSH_EXECUTION_OWNER_ONLY=true`. The adapter checks these capabilities at
-   startup and before handling MCP requests, refusing an unprotected backend.
+1. Start aqsh with `AQSH_BIND=127.0.0.1:8080`, `AQSH_AUTH_MODE=trusted-header`,
+   and explicit `roles` / `bindings` (see `examples/tasks.yaml`). The adapter
+   requires `/health` to report `rbac_enabled: true` at startup and before every
+   authenticated MCP request. Missing or disabled RBAC makes it refuse service.
 2. Copy `examples/config.yaml` to `config.yaml`. Set the public MCP URL, issuer,
    required scopes, and explicit group mappings for your authorization service.
 3. Select reviewed read-only tasks in `tools`. Tasks without an entry are hidden.
@@ -51,30 +53,40 @@ headers or OAuth tokens. The aqsh identity is `oauth:<issuer>#<URL-escaped-sub>`
 it remains stable across token refresh and includes the issuer. Token `scope`
 and `scp` may contain a space-separated string or string array. `groups_claim`
 selects a top-level array of strings; only configured `group_mapping` entries
-become aqsh groups. Use these mapped groups or canonical identities in aqsh's
-`allowed_groups`, `allowed_users` and `values_url` policy. aqsh remains the final
-authority for submissions and execution ownership.
+become aqsh groups. Bind these groups or canonical identities through aqsh's RBAC
+configuration. OAuth scopes permit MCP access; they do not grant aqsh's `run` or
+`read` verbs. aqsh remains the final authority for discovery, submissions and
+execution access. The adapter does not reproduce its policy evaluator.
 
-Existing Kubernetes clients can retain their kube-auth-proxy REST path. Every
-API instance sharing a queue must enforce owner-only reads and remain behind a
-trusted proxy. Identity headers must distinguish principals across all issuer
-and cluster domains; namespace/name alone is insufficient across clusters. Do
-not map all OAuth callers onto a shared ServiceAccount. This adapter does not
-change Kubernetes token validation or mint Kubernetes tokens.
+Other REST entry points may retain native TokenReview or an authenticating
+proxy. Every API instance sharing a queue must enforce the same RBAC policy;
+otherwise a legacy instance can still expose execution records. Trusted-header
+instances must remain private behind their authenticating entry point. Identity
+headers must distinguish principals across all issuer and cluster domains. Do
+not map all OAuth callers onto a shared ServiceAccount. Kubernetes TokenReview
+does not validate these OAuth tokens; this adapter neither mints Kubernetes tokens
+nor changes native authentication.
 
 ## MCP contract
 
-- `tools/list` converts only allowed task definitions into JSON Schema and
-  filters them using current task user/group ACLs. Internal environment names,
-  policy URLs and raw backend errors are not returned.
+- `tools/list` converts only explicitly exposed tasks that aqsh lets the caller
+  discover into JSON Schema. Missing/denied definitions are hidden; backend
+  failures return a generic error. Both `run` and `read` permit discovery in aqsh,
+  but the latter alone cannot submit a task. Internal environment names, policy
+  URLs and raw backend errors are not returned.
 - Task tools return `{execution_id, status, poll_after_ms}` after submission.
-  They do not report completion at enqueue time. `aqsh_get_execution` polls only
-  the caller's executions of currently exposed, authorized tasks.
+  They do not report completion at enqueue time. `aqsh_get_execution` asks aqsh
+  to authorize each read, then checks the original queued task name against the
+  exposure allowlist. Current `run` permits reading one's own execution; `read`
+  permits shared reads. Revocation applies on the next request. A retained
+  execution can still be polled after its task definition is removed, while its
+  task remains exposed and its queue remains configured in aqsh.
 - Defaults are parsed into the declared types and submitted explicitly before
   aqsh's target authorization. Optional blank `values_url` inputs are explicit
   too. Fractional integers, unknown fields, unsupported schemas, and integers
   beyond JSON's exact ±(2^53-1) range are rejected.
-- Result output is limited to status, timestamps, exit code and approved JSON.
+- Result output is limited to status, timestamps, exit code and approved JSON
+  parsed from the existing REST `result.data` string.
   Raw logs, errors, identity/groups and payload/environment are not exposed.
   Missing, invalid or oversized JSON is omitted with a reason, never truncated.
   JSON null and large numbers inside result JSON retain their wire representation.
@@ -100,7 +112,7 @@ scopes and JWT verification run over HTTP.
 For real Redis/aqsh/shell execution, build the two local binaries and run:
 
 ```sh
-# First build aqsh from a checkout containing both REST API changes:
+# First build aqsh from this checkout, including the REST metadata additions:
 # (cd /path/to/aqsh && go build -o /tmp/aqsh-under-test ./cmd/aqsh)
 go build -o /tmp/aqsh-mcp-under-test ./cmd/aqsh-mcp
 AQSH_BINARY=/tmp/aqsh-under-test \
@@ -110,12 +122,31 @@ go test -race ./... -count=1
 
 `redis-server` must be on PATH. The integration test starts isolated loopback
 services, uses temporary files, and shuts down its processes. It covers real
-execution, legacy REST result compatibility, owner isolation on status/logs,
-default-target authorization, and hidden tool rejection.
+execution, legacy REST result compatibility, peer denial on status/logs,
+shared-reader access without submission rights, revocation across backend restart,
+default-target authorization, and hidden tool rejection. CI runs both the module
+tests and this integration test; it also builds the separate adapter image.
 
-Real Keycloak/Auth0/company SSO and Codex/Claude/ChatGPT interoperability remain
-deployment acceptance checks. Passing the local issuer tests does not establish
-compatibility with every authorization service or client.
+The same worker integration can use a disposable Keycloak container instead of
+the test signing issuer:
+
+```sh
+AQSH_BINARY=/tmp/aqsh-under-test \
+AQSH_MCP_BINARY=/tmp/aqsh-mcp-under-test \
+AQSH_KEYCLOAK_IMAGE=quay.io/keycloak/keycloak:26.8.2 \
+go test -race ./internal/adapter -run '^TestRealQueueAndWorker$' -count=1 -timeout=180s
+```
+
+This requires Docker. It imports synthetic users and a pre-registered public
+client, then uses the official Go MCP client's authorization-code handler with
+Keycloak login and PKCE S256. The container is removed on completion. The client
+must emit a stable `sub`, the MCP URL as audience, required scopes, and the mapped
+groups; for existing Keycloak setups, retain its `basic` client scope or an
+equivalent subject mapper. See the [Keycloak subject claim migration](https://www.keycloak.org/docs/26.2.5/upgrading/).
+
+CI runs this acceptance fixture too. Company SSO configuration and
+Codex/Claude/ChatGPT interoperability still require deployment-specific checks;
+the fixtures do not establish compatibility with every service or client.
 
 ## Container
 

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
-	"slices"
 	"strings"
 )
 
@@ -53,23 +52,24 @@ func (b *backend) request(ctx context.Context, method, path string, p principal,
 
 func (b *backend) check(ctx context.Context) error {
 	var health struct {
-		OwnerOnly     bool `json:"execution_owner_only"`
-		JSONSupported bool `json:"result_json_supported"`
+		RBACEnabled bool   `json:"rbac_enabled"`
+		Redis       string `json:"redis"`
 	}
 	if err := b.request(ctx, "GET", "/health", principal{}, nil, &health); err != nil {
 		return err
 	}
-	if !health.OwnerOnly || !health.JSONSupported {
-		return errors.New("aqsh requires execution_owner_only and result_json_supported")
+	if !health.RBACEnabled {
+		return errors.New("aqsh requires RBAC to be enabled")
+	}
+	if health.Redis != "connected" {
+		return errors.New("aqsh backend unavailable")
 	}
 	return nil
 }
 
 type taskDef struct {
-	Description   string   `json:"description"`
-	Inputs        []input  `json:"input"`
-	AllowedUsers  []string `json:"allowed_users"`
-	AllowedGroups []string `json:"allowed_groups"`
+	Description string  `json:"description"`
+	Inputs      []input `json:"input"`
 }
 
 func (b *backend) definition(ctx context.Context, task string, p principal) (taskDef, error) {
@@ -78,33 +78,16 @@ func (b *backend) definition(ctx context.Context, task string, p principal) (tas
 	return d, err
 }
 
-func (d taskDef) allowed(p principal) bool {
-	if len(d.AllowedUsers) == 0 && len(d.AllowedGroups) == 0 {
-		return true
-	}
-	if slices.Contains(d.AllowedUsers, p.identity) {
-		return true
-	}
-	for _, g := range p.groups {
-		if slices.Contains(d.AllowedGroups, g) {
-			return true
-		}
-	}
-	return false
-}
-
 type execution struct {
 	ID          string `json:"id"`
 	Task        string `json:"task"`
 	Status      string `json:"status"`
-	Identity    string `json:"identity"`
 	CreatedAt   string `json:"created_at"`
 	StartedAt   string `json:"started_at"`
 	CompletedAt string `json:"completed_at"`
 	Result      *struct {
-		ExitCode int             `json:"exit_code"`
-		JSON     json.RawMessage `json:"json"`
-		Omitted  string          `json:"json_omitted"`
+		ExitCode int     `json:"exit_code"`
+		Data     *string `json:"data"`
 	} `json:"result"`
 }
 
@@ -127,24 +110,17 @@ func (e execution) output(t ToolConfig) map[string]any {
 		out["result_omitted"] = "not_enabled"
 	case e.Result == nil:
 		out["result_omitted"] = "unavailable"
-	case len(e.Result.JSON) > t.MaxResultBytes:
+	case e.Result.Data == nil:
+		out["result_omitted"] = "absent"
+	case len(*e.Result.Data) > t.MaxResultBytes:
 		out["result_omitted"] = "too_large"
-	case len(e.Result.JSON) == 0:
-		// Do not relay arbitrary server errors as omission reasons.
-		if slices.Contains([]string{"absent", "empty", "too_large", "invalid_json"}, e.Result.Omitted) {
-			out["result_omitted"] = e.Result.Omitted
-		} else {
-			out["result_omitted"] = "unavailable"
-		}
+	case strings.TrimSpace(*e.Result.Data) == "":
+		out["result_omitted"] = "empty"
+	case !json.Valid([]byte(*e.Result.Data)):
+		out["result_omitted"] = "invalid_json"
 	default:
-		var data any
-		decoder := json.NewDecoder(bytes.NewReader(e.Result.JSON))
-		decoder.UseNumber()
-		if decoder.Decode(&data) != nil {
-			out["result_omitted"] = "invalid_json"
-		} else {
-			out["data"] = data
-		}
+		// Keep null and number precision intact when encoding the MCP response.
+		out["data"] = json.RawMessage(*e.Result.Data)
 	}
 	return out
 }

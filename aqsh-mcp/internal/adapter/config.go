@@ -44,8 +44,15 @@ func LoadConfig(path string) (Config, error) {
 		return Config{}, err
 	}
 	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, (1<<20)+1))
+	if err != nil {
+		return Config{}, err
+	}
+	if len(data) > 1<<20 {
+		return Config{}, errors.New("configuration exceeds 1 MiB")
+	}
 	var cfg Config
-	d := yaml.NewDecoder(io.LimitReader(f, 1<<20))
+	d := yaml.NewDecoder(strings.NewReader(string(data)))
 	d.KnownFields(true)
 	if err := d.Decode(&cfg); err != nil {
 		return cfg, err
@@ -79,7 +86,7 @@ func (c *Config) validate() error {
 		return errors.New("at least one required OAuth scope is required")
 	}
 	for _, scope := range c.OAuth.RequiredScopes {
-		if scope == "" || strings.ContainsAny(scope, " \t\r\n\"\\") {
+		if scope == "" || strings.IndexFunc(scope, func(r rune) bool { return r < 0x21 || r > 0x7e || r == '"' || r == '\\' }) >= 0 {
 			return errors.New("invalid OAuth scope")
 		}
 	}

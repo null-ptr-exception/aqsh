@@ -10,7 +10,8 @@ aqsh is a simple, production-ready task queue for executing shell scripts asynch
 
 [`aqsh-mcp/`](aqsh-mcp/README.md) is an independent Go module and container for
 exposing selected read-only tasks over MCP. It uses aqsh's REST API and requires
-the owner-only execution and structured JSON result capabilities described there.
+explicit task RBAC. OAuth identities are verified by the adapter and authorized
+by aqsh; the adapter parses existing result strings without a separate JSON API.
 Build and test the adapter from its directory; the core module's commands and
 dependencies remain separate.
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"slices"
@@ -39,17 +38,8 @@ func New(ctx context.Context, cfg Config) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Catch unsupported schemas before listening. Actual catalogs are fetched with
-	// each caller's identity, allowing current ACLs and values_url policy to apply.
-	for _, t := range cfg.Tools {
-		d, err := b.definition(ctx, t.Task, principal{})
-		if err != nil {
-			return nil, fmt.Errorf("load task %q: %w", t.Task, err)
-		}
-		if _, _, err := inputSchema(d.Inputs); err != nil {
-			return nil, fmt.Errorf("task %q: %w", t.Task, err)
-		}
-	}
+	// Definitions require an authenticated caller in RBAC mode. Resolve catalogs
+	// per request, preserving aqsh's current discovery and values_url decisions.
 	pollSchema := map[string]any{"type": "object", "additionalProperties": false,
 		"properties": map[string]any{"execution_id": map[string]any{"type": "string", "pattern": "^[A-Za-z0-9_-]{1,256}$"}},
 		"required":   []string{"execution_id"}}
@@ -82,7 +72,7 @@ func New(ctx context.Context, cfg Config) (http.Handler, error) {
 			})
 		}
 		server.AddTool(&mcp.Tool{Name: "aqsh_get_execution",
-			Description: "Get your own execution of an exposed task. Poll until completed or failed; completion does not imply a healthy target.",
+			Description: "Get an authorized execution of an exposed task. Poll until completed or failed; completion does not imply a healthy target.",
 			InputSchema: pollSchema, OutputSchema: map[string]any{"type": "object"},
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
 		}, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -92,15 +82,18 @@ func New(ctx context.Context, cfg Config) (http.Handler, error) {
 			}
 			var result execution
 			id := args["execution_id"].(string)
-			if err := b.request(ctx, "GET", "/executions/"+url.PathEscape(id)+"?include_result_json=true", p, nil, &result); err != nil {
+			if err := b.request(ctx, "GET", "/executions/"+url.PathEscape(id), p, nil, &result); err != nil {
 				return toolError(err), nil
 			}
-			if result.Identity != p.identity || result.ID != id {
+			if result.ID != id {
 				return toolError(&apiError{404}), nil
 			}
-			for _, e := range entries {
-				if e.config.Task == result.Task {
-					return toolResult(result.output(e.config)), nil
+			// Check the queued task name against the configured exposure policy.
+			// aqsh already authorized this read, including shared readers and retained
+			// executions whose task definition has since been removed.
+			for _, t := range cfg.Tools {
+				if t.Task == result.Task {
+					return toolResult(result.output(t)), nil
 				}
 			}
 			return toolError(&apiError{404}), nil
@@ -117,11 +110,12 @@ func New(ctx context.Context, cfg Config) (http.Handler, error) {
 		for _, t := range cfg.Tools {
 			d, err := b.definition(r.Context(), t.Task, p)
 			if err != nil {
+				var apiErr *apiError
+				if errors.As(err, &apiErr) && (apiErr.status == 403 || apiErr.status == 404) {
+					continue
+				}
 				http.Error(w, "task catalog unavailable", 503)
 				return
-			}
-			if !d.allowed(p) {
-				continue
 			}
 			schema, resolved, err := inputSchema(d.Inputs)
 			if err != nil {

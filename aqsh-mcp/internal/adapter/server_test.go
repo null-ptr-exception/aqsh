@@ -1,6 +1,7 @@
 package adapter
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -48,7 +49,7 @@ func TestOAuthMCPBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(bobTools.Tools) != 1 || bobTools.Tools[0].Name != "aqsh_get_execution" {
-		t.Fatal("ACL did not filter catalog")
+		t.Fatal("aqsh discovery did not filter catalog")
 	}
 	if !call(t, bob, "aqsh_get_execution", map[string]any{"execution_id": id}).IsError {
 		t.Fatal("other owner read execution")
@@ -134,6 +135,17 @@ func TestOAuthRejectsInvalidTokens(t *testing.T) {
 			t.Fatalf("invalid signature status %d", resp.StatusCode)
 		}
 	}
+	repeated, _ := http.NewRequest("POST", cfg.PublicURL, strings.NewReader(`{}`))
+	repeated.Header.Add("Authorization", "Bearer "+i.token(t, cfg.PublicURL, "alice", nil))
+	repeated.Header.Add("Authorization", "Bearer another-token")
+	duplicateResponse, err := http.DefaultClient.Do(repeated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicateResponse.Body.Close()
+	if duplicateResponse.StatusCode != 401 {
+		t.Fatal("ambiguous bearer headers accepted")
+	}
 	req, _ := http.NewRequest("POST", cfg.PublicURL, strings.NewReader(`{}`))
 	req.Header.Set("Origin", "https://untrusted.example")
 	req.Header.Set("Authorization", "Bearer "+i.token(t, cfg.PublicURL, "alice", nil))
@@ -182,7 +194,7 @@ func TestFailClosedConfiguration(t *testing.T) {
 	}
 	cfg.Tools[0].ReadOnly = true
 	b.mu.Lock()
-	b.ownerOnly = false
+	b.rbacEnabled = false
 	b.mu.Unlock()
 	if _, err := New(t.Context(), cfg); err == nil {
 		t.Fatal("unprotected aqsh accepted")
@@ -202,10 +214,13 @@ func TestResultPolicy(t *testing.T) {
 		result map[string]any
 		want   string
 	}{
-		{"null", map[string]any{"exit_code": 0, "json": nil}, ""},
-		{"invalid", map[string]any{"exit_code": 1, "json_omitted": "invalid_json", "error": "secret"}, "invalid_json"},
-		{"oversize", map[string]any{"exit_code": 0, "json": strings.Repeat("x", 65537)}, "too_large"},
-		{"large-number", map[string]any{"exit_code": 0, "json": json.RawMessage(`{"count":9007199254740993}`)}, ""},
+		{"null", map[string]any{"exit_code": 0, "data": "null"}, ""},
+		{"absent", map[string]any{"exit_code": 0}, "absent"},
+		{"empty", map[string]any{"exit_code": 0, "data": " \n\t"}, "empty"},
+		{"invalid", map[string]any{"exit_code": 1, "data": "secret invalid JSON", "error": "secret"}, "invalid_json"},
+		{"trailing-json", map[string]any{"exit_code": 0, "data": `{} {"secret":true}`}, "invalid_json"},
+		{"oversize", map[string]any{"exit_code": 0, "data": strings.Repeat("x", 65537)}, "too_large"},
+		{"large-number", map[string]any{"exit_code": 0, "data": `{"count":9007199254740993}`}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b.mu.Lock()
@@ -267,6 +282,17 @@ func TestBrowserOriginAndPreflight(t *testing.T) {
 			t.Fatal("browser cannot discover OAuth")
 		}
 	}
+	req, _ := http.NewRequest("GET", server.URL+"/.well-known/oauth-protected-resource/mcp", nil)
+	req.Header.Set("Origin", cfg.AllowedOrigins[0])
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	allowOrigin := resp.Header.Get("Access-Control-Allow-Origin")
+	if resp.StatusCode != 200 || allowOrigin != "*" && allowOrigin != cfg.AllowedOrigins[0] {
+		t.Fatal("browser cannot read protected resource metadata")
+	}
 }
 
 func TestResultOmittedByDefault(t *testing.T) {
@@ -292,5 +318,81 @@ func TestResultOmittedByDefault(t *testing.T) {
 	}
 	if _, exists := out["data"]; exists {
 		t.Fatal("default policy exposed task output")
+	}
+}
+
+func TestCurrentRBACDecisions(t *testing.T) {
+	i, b := newIssuer(t), newBackend(t)
+	_, cfg := serveAdapter(t, b, i)
+	alice := connect(t, cfg.PublicURL, i.token(t, cfg.PublicURL, "alice", nil))
+	bob := connect(t, cfg.PublicURL, i.token(t, cfg.PublicURL, "bob", nil))
+	reader := connect(t, cfg.PublicURL, i.token(t, cfg.PublicURL, "auditor", jwt.MapClaims{"groups": []string{"auditors"}}))
+	id := content(t, call(t, alice, "inspect", map[string]any{}))["execution_id"]
+	if !call(t, bob, "aqsh_get_execution", map[string]any{"execution_id": id}).IsError {
+		t.Fatal("run on the same task must not grant access to a peer's execution")
+	}
+	if call(t, reader, "aqsh_get_execution", map[string]any{"execution_id": id}).IsError {
+		t.Fatal("adapter rejected an execution read authorized by aqsh")
+	}
+	if !call(t, reader, "inspect", map[string]any{}).IsError {
+		t.Fatal("discovery/read must not grant run")
+	}
+	b.mu.Lock()
+	b.revoked[identity(i.server.URL, "alice")] = true
+	b.mu.Unlock()
+	if !call(t, alice, "aqsh_get_execution", map[string]any{"execution_id": id}).IsError {
+		t.Fatal("stale owner permission survived revocation")
+	}
+	tools, err := alice.ListTools(t.Context(), nil)
+	if err != nil || len(tools.Tools) != 1 || tools.Tools[0].Name != "aqsh_get_execution" {
+		t.Fatalf("revoked catalog remained visible: %v %v", tools, err)
+	}
+	// The original queued task remains authorized even after its definition is
+	// retired. Exposure policy still applies, and aqsh makes the read decision.
+	b.mu.Lock()
+	delete(b.definitions, "inspect")
+	b.mu.Unlock()
+	if call(t, reader, "aqsh_get_execution", map[string]any{"execution_id": id}).IsError {
+		t.Fatal("retiring a task definition hid an authorized retained execution")
+	}
+}
+
+func TestStartupDeadlineDoesNotCancelTokenVerification(t *testing.T) {
+	i, b := newIssuer(t), newBackend(t)
+	server := httptest.NewUnstartedServer(nil)
+	cfg := testConfig(b, i, "http://"+server.Listener.Addr().String()+"/mcp")
+	startup, cancel := context.WithCancel(t.Context())
+	handler, err := New(startup, cfg)
+	cancel()
+	if err != nil {
+		server.Close()
+		t.Fatal(err)
+	}
+	server.Config.Handler = handler
+	server.Start()
+	t.Cleanup(server.Close)
+	session := connect(t, cfg.PublicURL, i.token(t, cfg.PublicURL, "alice", nil))
+	if _, err := session.ListTools(t.Context(), nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBackendProtectionCheckedAfterStartup(t *testing.T) {
+	i, b := newIssuer(t), newBackend(t)
+	server, cfg := serveAdapter(t, b, i)
+	b.mu.Lock()
+	b.rbacEnabled = false
+	b.mu.Unlock()
+	for _, path := range []string{"/health", "/mcp"} {
+		req, _ := http.NewRequest("GET", server.URL+path, nil)
+		req.Header.Set("Authorization", "Bearer "+i.token(t, cfg.PublicURL, "alice", nil))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 503 {
+			t.Fatalf("unprotected backend accepted for %s: %d", path, resp.StatusCode)
+		}
 	}
 }

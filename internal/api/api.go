@@ -307,6 +307,9 @@ func (s *Server) handleGetExecution(w http.ResponseWriter, r *http.Request) {
 	// Get created_at and identity from task payload
 	var payload worker.TaskPayload
 	if err := json.Unmarshal(info.Payload, &payload); err == nil {
+		if payload.Name != "" {
+			resp["task"] = payload.Name
+		}
 		if !payload.CreatedAt.IsZero() {
 			resp["created_at"] = payload.CreatedAt.Format(time.RFC3339)
 		}
@@ -429,10 +432,11 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.jsonResponse(w, http.StatusOK, map[string]any{
-		"status":  "healthy",
-		"version": s.version,
-		"redis":   redisStatus,
-		"mode":    s.cfg.Mode,
+		"status":       "healthy",
+		"version":      s.version,
+		"redis":        redisStatus,
+		"mode":         s.cfg.Mode,
+		"rbac_enabled": s.tasks.RBACEnabled(),
 	})
 }
 

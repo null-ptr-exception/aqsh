@@ -151,6 +151,7 @@ the task definition itself need not remain. See [lifecycle and retention](author
   "queue": "default",
   "status": "completed",
   "identity": "alice@example.com",
+  "task": "deploy",
   "groups": "deploy-team,platform-team",
   "created_at": "2025-12-28T10:00:00Z",
   "started_at": "2025-12-28T10:00:01Z",
@@ -218,9 +219,14 @@ data: Deployment complete.
   "status": "healthy",
   "version": "0.1.0",
   "redis": "connected",
-  "mode": "api"
+  "mode": "api",
+  "rbac_enabled": false
 }
 ```
+
+`rbac_enabled` reports whether an explicit roles/bindings policy is loaded,
+including an empty policy that denies all access. It does not describe any
+particular caller's grants.
 
 ### GET /metrics - Prometheus Metrics
 

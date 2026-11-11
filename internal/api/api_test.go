@@ -134,6 +134,27 @@ func TestHandleHealth(t *testing.T) {
 	if resp["mode"] != "combined" {
 		t.Errorf("expected mode=combined, got %v", resp["mode"])
 	}
+	if resp["rbac_enabled"] != false {
+		t.Errorf("legacy health must report rbac_enabled=false, got %v", resp["rbac_enabled"])
+	}
+}
+
+func TestHealthReportsEmptyRBACPolicy(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+	s := &Server{cfg: &config.Config{Mode: "api"}, rdb: rdb,
+		tasks: &tasks.TasksConfig{Roles: map[string][]tasks.Rule{}},
+	}
+	rec := httptest.NewRecorder()
+	s.handleHealth(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["rbac_enabled"] != true {
+		t.Fatalf("explicit empty policy must report RBAC enabled: %s", rec.Body.String())
+	}
 }
 
 func TestHandleHealthRedisDown(t *testing.T) {
@@ -677,6 +698,9 @@ func TestHandleGetExecutionIdentity(t *testing.T) {
 
 	if resp["identity"] != "alice@example.com" {
 		t.Errorf("expected identity='alice@example.com', got %v", resp["identity"])
+	}
+	if resp["task"] != "test" {
+		t.Errorf("expected queued task name 'test', got %v", resp["task"])
 	}
 }
 

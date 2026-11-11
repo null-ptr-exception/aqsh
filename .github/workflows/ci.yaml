@@ -22,6 +22,44 @@ jobs:
 
       - run: go test -v ./...
 
+  mcp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: aqsh-mcp/go.mod
+          cache-dependency-path: aqsh-mcp/go.sum
+
+      - name: Install Redis for MCP integration
+        run: sudo apt-get update && sudo apt-get install -y redis-server
+
+      - name: Build aqsh for MCP integration
+        run: go build -race -o "$RUNNER_TEMP/aqsh" ./cmd/aqsh
+
+      - name: Test standalone MCP module and real worker
+        working-directory: aqsh-mcp
+        run: |
+          go build -race -o "$RUNNER_TEMP/aqsh-mcp" ./cmd/aqsh-mcp
+          AQSH_BINARY="$RUNNER_TEMP/aqsh" AQSH_MCP_BINARY="$RUNNER_TEMP/aqsh-mcp" \
+            go test -race ./... -count=1 -timeout=180s
+          go vet ./...
+
+      - name: Verify Keycloak authorization code and PKCE flow
+        working-directory: aqsh-mcp
+        run: |
+          AQSH_BINARY="$RUNNER_TEMP/aqsh" AQSH_MCP_BINARY="$RUNNER_TEMP/aqsh-mcp" \
+            AQSH_KEYCLOAK_IMAGE=quay.io/keycloak/keycloak:26.8.2 \
+            go test -race ./internal/adapter -run '^TestRealQueueAndWorker$' -count=1 -timeout=180s
+
+      - name: Build standalone MCP image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ./aqsh-mcp
+          push: false
+
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -73,7 +111,7 @@ jobs:
 
   release:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: [test, integration, build]
+    needs: [test, mcp, integration, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write

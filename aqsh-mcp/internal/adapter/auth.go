@@ -48,13 +48,15 @@ func newVerifier(ctx context.Context, cfg Config, client *http.Client) (auth.Tok
 	if _, err := endpoint(metadata.JWKS); err != nil {
 		return nil, errors.New("invalid authorization server jwks_uri")
 	}
-	keys := oidc.NewRemoteKeySet(oidc.ClientContext(ctx, client), metadata.JWKS)
+	// Key refreshes outlive the startup/discovery deadline. The HTTP client still
+	// bounds each fetch; cancelling startup must not break all later token checks.
+	keys := oidc.NewRemoteKeySet(oidc.ClientContext(context.WithoutCancel(ctx), client), metadata.JWKS)
 	verifier := oidc.NewVerifier(cfg.OAuth.Issuer, keys, &oidc.Config{
 		ClientID: cfg.PublicURL, SupportedSigningAlgs: []string{"RS256", "ES256", "PS256", "EdDSA"},
 	})
 	validator := jwt.NewValidator(jwt.WithIssuer(cfg.OAuth.Issuer), jwt.WithAudience(cfg.PublicURL), jwt.WithExpirationRequired())
-	return func(ctx context.Context, raw string, _ *http.Request) (*auth.TokenInfo, error) {
-		if len(raw) > 16384 {
+	return func(ctx context.Context, raw string, req *http.Request) (*auth.TokenInfo, error) {
+		if len(raw) > 16384 || len(req.Header.Values("Authorization")) != 1 {
 			return nil, auth.ErrInvalidToken
 		}
 		token, err := verifier.Verify(ctx, raw)

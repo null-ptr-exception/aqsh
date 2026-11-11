@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -140,26 +141,31 @@ func connect(t *testing.T, endpoint, token string) *mcp.ClientSession {
 
 func connectOAuth(t *testing.T, endpoint string) *mcp.ClientSession {
 	t.Helper()
+	return connectOAuthWithFetcher(t, endpoint, func(ctx context.Context, args *auth.AuthorizationArgs) (*auth.AuthorizationResult, error) {
+		req, _ := http.NewRequestWithContext(ctx, "GET", args.URL, nil)
+		client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != 302 {
+			return nil, fmt.Errorf("authorize status %d", resp.StatusCode)
+		}
+		u, err := url.Parse(resp.Header.Get("Location"))
+		if err != nil {
+			return nil, err
+		}
+		q := u.Query()
+		return &auth.AuthorizationResult{Code: q.Get("code"), State: q.Get("state"), Iss: q.Get("iss")}, nil
+	})
+}
+
+func connectOAuthWithFetcher(t *testing.T, endpoint string, fetcher func(context.Context, *auth.AuthorizationArgs) (*auth.AuthorizationResult, error)) *mcp.ClientSession {
+	t.Helper()
 	handler, err := auth.NewAuthorizationCodeHandler(&auth.AuthorizationCodeHandlerConfig{
 		PreregisteredClient: &oauthex.ClientCredentials{ClientID: "test-client"}, RedirectURL: "http://127.0.0.1/callback",
-		AuthorizationCodeFetcher: func(ctx context.Context, args *auth.AuthorizationArgs) (*auth.AuthorizationResult, error) {
-			req, _ := http.NewRequestWithContext(ctx, "GET", args.URL, nil)
-			client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-			resp, err := client.Do(req)
-			if err != nil {
-				return nil, err
-			}
-			defer resp.Body.Close()
-			if resp.StatusCode != 302 {
-				return nil, fmt.Errorf("authorize status %d", resp.StatusCode)
-			}
-			u, err := url.Parse(resp.Header.Get("Location"))
-			if err != nil {
-				return nil, err
-			}
-			q := u.Query()
-			return &auth.AuthorizationResult{Code: q.Get("code"), State: q.Get("state"), Iss: q.Get("iss")}, nil
-		},
+		AuthorizationCodeFetcher: fetcher,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -203,13 +209,14 @@ type testBackend struct {
 	accepted                                    int
 	lastArgs                                    map[string]any
 	lastIdentity, lastGroups, lastAuthorization string
-	ownerOnly                                   bool
+	rbacEnabled                                 bool
+	revoked                                     map[string]bool
 }
 
 func newBackend(t *testing.T) *testBackend {
 	t.Helper()
-	b := &testBackend{ownerOnly: true, definitions: map[string]taskDef{
-		"inspect": {Description: "Inspect", AllowedGroups: []string{"db-readers"}, Inputs: []input{
+	b := &testBackend{rbacEnabled: true, revoked: map[string]bool{}, definitions: map[string]taskDef{
+		"inspect": {Description: "Inspect", Inputs: []input{
 			{Name: "target", Type: "string", Default: "allowed", ValuesURL: true},
 			{Name: "count", Type: "int", Default: "2"},
 			{Name: "verbose", Type: "bool", Default: "false"},
@@ -220,13 +227,21 @@ func newBackend(t *testing.T) *testBackend {
 		defer b.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/health" {
-			json.NewEncoder(w).Encode(map[string]any{"execution_owner_only": b.ownerOnly, "result_json_supported": true})
+			json.NewEncoder(w).Encode(map[string]any{"rbac_enabled": b.rbacEnabled, "redis": "connected"})
 			return
 		}
+		caller := r.Header.Get("X-Forwarded-User")
+		if caller == "" {
+			http.Error(w, "identity required", 401)
+			return
+		}
+		groups := strings.Split(r.Header.Get("X-Forwarded-Groups"), ",")
+		run := !b.revoked[caller] && slices.Contains(groups, "db-readers")
+		read := !b.revoked[caller] && slices.Contains(groups, "db-auditors")
 		if strings.HasPrefix(r.URL.Path, "/tasks/") {
 			name := strings.TrimPrefix(r.URL.Path, "/tasks/")
 			d, ok := b.definitions[name]
-			if !ok {
+			if !ok || !run && !read {
 				http.NotFound(w, r)
 				return
 			}
@@ -241,21 +256,21 @@ func newBackend(t *testing.T) *testBackend {
 				return
 			}
 			b.lastArgs = args
-			if !d.allowed(principal{b.lastIdentity, strings.Split(b.lastGroups, ",")}) || args["target"] != "allowed" {
+			if !run || args["target"] != "allowed" {
 				http.Error(w, "private policy URL secret", 403)
 				return
 			}
 			b.accepted++
 			id := fmt.Sprintf("exec-%d", b.accepted)
 			b.records[id] = map[string]any{"id": id, "task": name, "identity": b.lastIdentity, "status": "completed", "last_error": "secret stderr", "groups": "secret groups",
-				"result": map[string]any{"exit_code": 0, "json": map[string]any{"healthy": false}, "data": "secret raw data", "error": "secret script error"}}
+				"result": map[string]any{"exit_code": 0, "data": `{"healthy":false}`, "error": "secret script error"}}
 			w.WriteHeader(202)
 			json.NewEncoder(w).Encode(map[string]any{"id": id, "status": "pending"})
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/executions/") {
 			e, ok := b.records[strings.TrimPrefix(r.URL.Path, "/executions/")]
-			if !ok || b.ownerOnly && e["identity"] != r.Header.Get("X-Forwarded-User") {
+			if !ok || !read && !(run && e["identity"] == caller) {
 				http.NotFound(w, r)
 				return
 			}
@@ -270,7 +285,7 @@ func newBackend(t *testing.T) *testBackend {
 
 func testConfig(b *testBackend, i *testIssuer, public string) Config {
 	return Config{PublicURL: public, BackendURL: b.server.URL,
-		OAuth: OAuthConfig{Issuer: i.server.URL, RequiredScopes: []string{"aqsh:read"}, GroupMapping: map[string]string{"ops": "db-readers"}},
+		OAuth: OAuthConfig{Issuer: i.server.URL, RequiredScopes: []string{"aqsh:read"}, GroupMapping: map[string]string{"ops": "db-readers", "auditors": "db-auditors"}},
 		Tools: []ToolConfig{{Name: "inspect", Task: "inspect", ReadOnly: true, ResultMode: "json"}},
 	}
 }
