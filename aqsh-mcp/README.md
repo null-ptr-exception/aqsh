@@ -58,6 +58,10 @@ configuration. OAuth scopes permit MCP access; they do not grant aqsh's `run` or
 `read` verbs. aqsh remains the final authority for discovery, submissions and
 execution access. The adapter does not reproduce its policy evaluator.
 
+Changes to aqsh roles/bindings apply to subsequent requests. Issuer-side group
+changes and token revocation are not introspected; an already issued JWT can
+remain valid until its expiry.
+
 Other REST entry points may retain native TokenReview or an authenticating
 proxy. Every API instance sharing a queue must enforce the same RBAC policy;
 otherwise a legacy instance can still expose execution records. Trusted-header
@@ -78,7 +82,7 @@ nor changes native authentication.
   They do not report completion at enqueue time. `aqsh_get_execution` asks aqsh
   to authorize each read, then checks the original queued task name against the
   exposure allowlist. Current `run` permits reading one's own execution; `read`
-  permits shared reads. Revocation applies on the next request. A retained
+  permits shared reads. RBAC grant changes apply on the next request. A retained
   execution can still be polled after its task definition is removed, while its
   task remains exposed and its queue remains configured in aqsh.
 - Defaults are parsed into the declared types and submitted explicitly before
