@@ -1,0 +1,23 @@
+defaults:
+  timeout: 10s
+  max_retry: 0
+roles:
+  reader:
+    - tasks: [inspect]
+      verbs: [run]
+  auditor:
+    - tasks: [inspect]
+      verbs: [read]
+bindings:
+  reader: {groups: [db-readers]}
+  auditor: {groups: [db-auditors]}
+tasks:
+  inspect:
+    description: Inspect a demo target.
+    script: inspect.sh
+    input:
+      - name: target
+        env: TARGET
+        type: string
+        pattern: '^[a-z0-9_-]+$'
+        default: demo

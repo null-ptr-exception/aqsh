@@ -1,0 +1,5 @@
+.git
+config.yaml
+*.log
+aqsh-mcp
+**/*_test.go
